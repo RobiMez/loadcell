@@ -339,6 +339,53 @@
         padding: 4px 9px;
         border-radius: 999px;
       }
+
+      /* Download-count line under each platform sub-heading. */
+      .dl-count {
+        margin: 0 0 18px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .dl-count-num {
+        background: var(--sage-tint);
+        color: var(--accent-strong);
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-weight: 600;
+        font-size: 11px;
+        letter-spacing: 0.02em;
+      }
+      .dl-total-line {
+        margin: 0 0 32px;
+        color: var(--muted);
+        font-size: 13px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #dl-total {
+        font-size: 22px;
+        font-weight: 600;
+        color: var(--text);
+        font-variant-numeric: tabular-nums;
+        letter-spacing: -0.01em;
+      }
+      .dl-total-suffix {
+        color: var(--muted);
+      }
+      #dl-tag {
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 12px;
+        color: var(--accent-strong);
+        background: var(--surface);
+        padding: 1px 6px;
+        border-radius: 4px;
+      }
       .platform .pico {
         font-size: 28px;
         margin-bottom: 12px;
@@ -763,6 +810,10 @@
           workflow. Pick your platform &mdash; or
           <a href="#build">build from source</a> if you'd rather.
         </p>
+        <p class="dl-total-line" id="dl-total-line" hidden>
+          <strong id="dl-total">—</strong>
+          <span class="dl-total-suffix">downloads of <span id="dl-tag">v1.0.0</span></span>
+        </p>
 
         <div class="platforms">
           <div class="platform" id="card-macos">
@@ -773,6 +824,10 @@
             </div>
             <h3>macOS</h3>
             <p class="sub">Universal binary &middot; Apple Silicon + Intel</p>
+            <p class="dl-count" hidden>
+              <span class="dl-count-num" data-asset="loadcell-darwin-universal.tar.gz">—</span>
+              downloads
+            </p>
             <div class="actions">
               <a
                 class="btn-dl"
@@ -792,6 +847,10 @@
             </div>
             <h3>Windows</h3>
             <p class="sub">Standalone .exe &middot; x64</p>
+            <p class="dl-count" hidden>
+              <span class="dl-count-num" data-asset="loadcell-windows-amd64.zip">—</span>
+              downloads
+            </p>
             <div class="actions">
               <a
                 class="btn-dl"
@@ -811,6 +870,10 @@
             </div>
             <h3>Linux</h3>
             <p class="sub">Standalone binary &middot; amd64</p>
+            <p class="dl-count" hidden>
+              <span class="dl-count-num" data-asset="loadcell-linux-amd64.tar.gz">—</span>
+              downloads
+            </p>
             <div class="actions">
               <a
                 class="btn-dl"
@@ -939,17 +1002,101 @@
         }
 
         var os = detectOS();
-        if (!os) return;
-
-        var asset = ASSETS[os];
-        var btn = document.getElementById("hero-dl");
-        var lbl = document.getElementById("hero-dl-label");
-        if (btn && lbl) {
-          btn.setAttribute("href", asset.href);
-          lbl.textContent = asset.label;
+        if (os) {
+          var asset = ASSETS[os];
+          var btn = document.getElementById("hero-dl");
+          var lbl = document.getElementById("hero-dl-label");
+          if (btn && lbl) {
+            btn.setAttribute("href", asset.href);
+            lbl.textContent = asset.label;
+          }
+          var card = document.getElementById(asset.cardId);
+          if (card) card.classList.add("your-platform");
         }
-        var card = document.getElementById(asset.cardId);
-        if (card) card.classList.add("your-platform");
+      })();
+
+      // ── Download statistics from the GitHub API ─────────────
+      // Unauthenticated requests get 60/hour per IP, which is plenty for
+      // this page. Cache the response in sessionStorage for 5 min so
+      // back-and-forth navigation doesn't hammer it. Any failure (rate
+      // limit, network, schema drift) silently leaves the count placeholders
+      // hidden — the page never depends on them rendering.
+      (function () {
+        var API = "https://api.github.com/repos/RobiMez/loadcell/releases/latest";
+        var CACHE_KEY = "lc.releaseStats.v1";
+        var CACHE_TTL_MS = 5 * 60 * 1000;
+
+        function fmt(n) {
+          // 1234 → "1,234"
+          try {
+            return Number(n).toLocaleString();
+          } catch (e) {
+            return String(n);
+          }
+        }
+
+        function render(data) {
+          if (!data || !Array.isArray(data.assets)) return;
+          var total = 0;
+          var bumped = 0;
+          for (var i = 0; i < data.assets.length; i++) {
+            var a = data.assets[i];
+            if (!a || typeof a.download_count !== "number") continue;
+            total += a.download_count;
+            var nodes = document.querySelectorAll(
+              '.dl-count-num[data-asset="' + a.name + '"]'
+            );
+            for (var j = 0; j < nodes.length; j++) {
+              nodes[j].textContent = fmt(a.download_count);
+              var line = nodes[j].closest(".dl-count");
+              if (line) line.hidden = false;
+              bumped++;
+            }
+          }
+          if (bumped > 0) {
+            var totalEl = document.getElementById("dl-total");
+            var totalLine = document.getElementById("dl-total-line");
+            var tagEl = document.getElementById("dl-tag");
+            if (totalEl) totalEl.textContent = fmt(total);
+            if (tagEl && data.tag_name) tagEl.textContent = data.tag_name;
+            if (totalLine) totalLine.hidden = false;
+          }
+        }
+
+        function readCache() {
+          try {
+            var raw = sessionStorage.getItem(CACHE_KEY);
+            if (!raw) return null;
+            var obj = JSON.parse(raw);
+            if (!obj || Date.now() - obj.ts > CACHE_TTL_MS) return null;
+            return obj.data;
+          } catch (e) {
+            return null;
+          }
+        }
+        function writeCache(data) {
+          try {
+            sessionStorage.setItem(
+              CACHE_KEY,
+              JSON.stringify({ ts: Date.now(), data: data })
+            );
+          } catch (e) { /* ignore quota */ }
+        }
+
+        var cached = readCache();
+        if (cached) {
+          render(cached);
+          return;
+        }
+        if (typeof fetch !== "function") return;
+        fetch(API, { headers: { Accept: "application/vnd.github+json" } })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (data) {
+            if (!data) return;
+            writeCache(data);
+            render(data);
+          })
+          .catch(function () { /* offline / blocked / 403 — no-op */ });
       })();
     </script>
   </body>
