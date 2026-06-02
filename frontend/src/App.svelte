@@ -767,6 +767,7 @@
   function openInfo() { infoOpen = true; }
   function closeInfo() { infoOpen = false; }
   function openRobiWork() { BrowserOpenURL('https://robi.work'); }
+  function openSponsor() { BrowserOpenURL('https://github.com/sponsors/RobiMez'); }
 
   function snapshotRun(m: Metrics) {
     if (history.length === 0) return;
@@ -2475,6 +2476,18 @@
           title="Open robi.work"
         >
           Built by Robi · robi.work →
+        </button>
+
+        <button
+          type="button"
+          class="info-sponsor"
+          on:click={openSponsor}
+          title="Sponsor on GitHub"
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+            <path d="M12 21s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 5.65-7 10-7 10Z" />
+          </svg>
+          Sponsor on GitHub
         </button>
       </div>
     </div>
@@ -4910,6 +4923,36 @@
   .info-link:hover {
     background: var(--accent-strong);
     border-color: var(--accent-strong);
+  }
+  .info-sponsor {
+    appearance: none;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--line-strong);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-top: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: border-color 120ms, color 120ms, background 120ms;
+  }
+  .info-sponsor svg {
+    width: 13px;
+    height: 13px;
+    color: #c44d4d;
+  }
+  .info-sponsor:hover {
+    border-color: var(--accent);
+    color: var(--accent-strong);
+    background: rgba(72, 89, 65, 0.05);
+  }
+  .info-sponsor:hover svg {
+    color: #b03939;
   }
   @keyframes lc-fade-in {
     from { opacity: 0; }
