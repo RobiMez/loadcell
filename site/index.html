@@ -356,6 +356,56 @@
         border-radius: 999px;
       }
 
+      /* Collapsible Gatekeeper hint under the macOS card. */
+      .gk-note {
+        margin-top: 12px;
+        border: 1px dashed var(--line-strong);
+        border-radius: 6px;
+        padding: 0;
+        background: var(--surface-2);
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .gk-note summary {
+        cursor: pointer;
+        list-style: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 10px;
+        color: var(--rate);
+        font-weight: 500;
+        user-select: none;
+      }
+      .gk-note summary::-webkit-details-marker { display: none; }
+      .gk-note summary svg {
+        width: 14px;
+        height: 14px;
+      }
+      .gk-note[open] summary {
+        border-bottom: 1px dashed var(--line);
+        padding-bottom: 8px;
+      }
+      .gk-note p {
+        margin: 10px 12px 6px;
+        line-height: 1.55;
+      }
+      .gk-note ol {
+        margin: 0 12px 12px;
+        padding-left: 18px;
+        line-height: 1.65;
+      }
+      .gk-note code {
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 11px;
+        background: var(--inset);
+        color: var(--text);
+        padding: 1px 5px;
+        border-radius: 3px;
+        border: 1px solid var(--line);
+      }
+      .gk-note em { color: var(--text); font-style: italic; }
+
       /* Download-count line under each platform sub-heading. */
       .dl-count {
         margin: 0 0 18px;
@@ -912,6 +962,26 @@
                 All releases →
               </a>
             </div>
+            <details class="gk-note">
+              <summary>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 8v4" />
+                  <path d="M12 16h.01" />
+                </svg>
+                Gatekeeper will flag it
+              </summary>
+              <p>
+                The binary isn't notarized (yet), so the first launch shows
+                "<em>cannot be opened because the developer cannot be
+                verified</em>." Two quick ways past it:
+              </p>
+              <ol>
+                <li>Right-click <code>loadcell.app</code> &rarr; <strong>Open</strong>, then confirm in the dialog.</li>
+                <li>Or in Terminal: <code>xattr -dr com.apple.quarantine /Applications/loadcell.app</code></li>
+              </ol>
+            </details>
           </div>
 
           <div class="platform" id="card-windows">
