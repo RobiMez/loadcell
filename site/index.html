@@ -499,6 +499,11 @@
       .dl-total-suffix {
         color: var(--muted);
       }
+      .dl-total-sep {
+        margin: 0 6px;
+        color: var(--muted-2);
+        opacity: 0.6;
+      }
       #dl-tag {
         font-family: "JetBrains Mono", ui-monospace, monospace;
         font-size: 12px;
@@ -1012,7 +1017,11 @@
         </p>
         <p class="dl-total-line" id="dl-total-line" hidden>
           <strong id="dl-total">—</strong>
-          <span class="dl-total-suffix">downloads of <span id="dl-tag">v1.0.0</span></span>
+          <span class="dl-total-suffix">
+            downloads across <span id="dl-releases">—</span> release<span id="dl-releases-s">s</span>
+            <span class="dl-total-sep" aria-hidden="true">·</span>
+            latest <span id="dl-tag">v—</span>
+          </span>
         </p>
 
         <div class="platforms">
@@ -1285,51 +1294,82 @@
       })();
 
       // ── Download statistics from the GitHub API ─────────────
-      // Unauthenticated requests get 60/hour per IP, which is plenty for
-      // this page. Cache the response in sessionStorage for 5 min so
-      // back-and-forth navigation doesn't hammer it. Any failure (rate
-      // limit, network, schema drift) silently leaves the count placeholders
-      // hidden — the page never depends on them rendering.
+      // Aggregate download counts across *all* releases so the per-card
+      // and grand-total numbers reflect cumulative interest, not just
+      // whatever's in the latest tag. Skips drafts/prereleases (their
+      // assets aren't user-facing). Caches the aggregated shape in
+      // sessionStorage for 5 min — the API itself caps anon callers at
+      // 60/hour per IP. Any failure leaves the placeholders hidden.
       (function () {
-        var API = "https://api.github.com/repos/RobiMez/loadcell/releases/latest";
-        var CACHE_KEY = "lc.releaseStats.v1";
+        var API = "https://api.github.com/repos/RobiMez/loadcell/releases?per_page=100";
+        var CACHE_KEY = "lc.releaseStats.v2";
         var CACHE_TTL_MS = 5 * 60 * 1000;
 
         function fmt(n) {
-          // 1234 → "1,234"
-          try {
-            return Number(n).toLocaleString();
-          } catch (e) {
-            return String(n);
-          }
+          try { return Number(n).toLocaleString(); }
+          catch (e) { return String(n); }
         }
 
-        function render(data) {
-          if (!data || !Array.isArray(data.assets)) return;
+        // Walk the full /releases array; sum download_count per asset name
+        // and track the latest non-draft tag (newest createdAt).
+        function aggregate(releases) {
+          if (!Array.isArray(releases)) return null;
+          var perAsset = Object.create(null);
           var total = 0;
+          var releaseCount = 0;
+          var latest = null;
+          for (var i = 0; i < releases.length; i++) {
+            var r = releases[i];
+            if (!r || r.draft) continue;
+            releaseCount++;
+            if (
+              !latest ||
+              (r.published_at && r.published_at > (latest.published_at || ""))
+            ) {
+              latest = r;
+            }
+            var assets = Array.isArray(r.assets) ? r.assets : [];
+            for (var j = 0; j < assets.length; j++) {
+              var a = assets[j];
+              if (!a || typeof a.download_count !== "number") continue;
+              perAsset[a.name] = (perAsset[a.name] || 0) + a.download_count;
+              total += a.download_count;
+            }
+          }
+          return {
+            perAsset: perAsset,
+            total: total,
+            releaseCount: releaseCount,
+            latestTag: latest ? latest.tag_name : null,
+          };
+        }
+
+        function render(agg) {
+          if (!agg) return;
           var bumped = 0;
-          for (var i = 0; i < data.assets.length; i++) {
-            var a = data.assets[i];
-            if (!a || typeof a.download_count !== "number") continue;
-            total += a.download_count;
+          for (var name in agg.perAsset) {
+            var n = agg.perAsset[name];
             var nodes = document.querySelectorAll(
-              '.dl-count-num[data-asset="' + a.name + '"]'
+              '.dl-count-num[data-asset="' + name + '"]'
             );
-            for (var j = 0; j < nodes.length; j++) {
-              nodes[j].textContent = fmt(a.download_count);
-              var line = nodes[j].closest(".dl-count");
+            for (var k = 0; k < nodes.length; k++) {
+              nodes[k].textContent = fmt(n);
+              var line = nodes[k].closest(".dl-count");
               if (line) line.hidden = false;
               bumped++;
             }
           }
-          if (bumped > 0) {
-            var totalEl = document.getElementById("dl-total");
-            var totalLine = document.getElementById("dl-total-line");
-            var tagEl = document.getElementById("dl-tag");
-            if (totalEl) totalEl.textContent = fmt(total);
-            if (tagEl && data.tag_name) tagEl.textContent = data.tag_name;
-            if (totalLine) totalLine.hidden = false;
-          }
+          if (bumped === 0) return;
+          var totalEl = document.getElementById("dl-total");
+          var totalLine = document.getElementById("dl-total-line");
+          var tagEl = document.getElementById("dl-tag");
+          var relEl = document.getElementById("dl-releases");
+          var relSEl = document.getElementById("dl-releases-s");
+          if (totalEl) totalEl.textContent = fmt(agg.total);
+          if (tagEl && agg.latestTag) tagEl.textContent = agg.latestTag;
+          if (relEl) relEl.textContent = fmt(agg.releaseCount);
+          if (relSEl) relSEl.textContent = agg.releaseCount === 1 ? "" : "s";
+          if (totalLine) totalLine.hidden = false;
         }
 
         function readCache() {
@@ -1339,9 +1379,7 @@
             var obj = JSON.parse(raw);
             if (!obj || Date.now() - obj.ts > CACHE_TTL_MS) return null;
             return obj.data;
-          } catch (e) {
-            return null;
-          }
+          } catch (e) { return null; }
         }
         function writeCache(data) {
           try {
@@ -1353,17 +1391,15 @@
         }
 
         var cached = readCache();
-        if (cached) {
-          render(cached);
-          return;
-        }
+        if (cached) { render(cached); return; }
         if (typeof fetch !== "function") return;
         fetch(API, { headers: { Accept: "application/vnd.github+json" } })
           .then(function (r) { return r.ok ? r.json() : null; })
           .then(function (data) {
-            if (!data) return;
-            writeCache(data);
-            render(data);
+            var agg = aggregate(data);
+            if (!agg) return;
+            writeCache(agg);
+            render(agg);
           })
           .catch(function () { /* offline / blocked / 403 — no-op */ });
       })();
