@@ -358,6 +358,17 @@
         color: #fff;
         border-color: var(--accent);
       }
+      .platform .actions a.btn-dl {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+        font-weight: 500;
+      }
+      .platform .actions a.btn-dl:hover {
+        background: var(--accent-strong);
+        border-color: var(--accent-strong);
+        transform: translateY(-1px);
+      }
       .platform .actions a.muted {
         color: var(--muted);
         border-style: dashed;
@@ -554,7 +565,7 @@
         <div class="links">
           <a href="#features">Features</a>
           <a href="#build">Get it</a>
-          <a class="gh-mobile" href="https://github.com/robimez/loadcell">GitHub →</a>
+          <a class="gh-mobile" href="https://github.com/RobiMez/loadcell">GitHub →</a>
         </div>
       </nav>
 
@@ -580,7 +591,7 @@
             </a>
             <a
               class="btn btn-secondary"
-              href="https://github.com/robimez/loadcell"
+              href="https://github.com/RobiMez/loadcell"
             >
               <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path
@@ -719,11 +730,11 @@
     <section id="download" class="download">
       <div class="wrap">
         <div class="section-eyebrow">Get it</div>
-        <h2>Built from source, for now.</h2>
+        <h2>Grab a build.</h2>
         <p class="section-lede">
-          Prebuilt binaries aren&rsquo;t cut yet &mdash; the Wails build pipeline
-          is in place, releases will land on GitHub. Until then, every platform
-          ships the same way: <a href="#build">three commands</a>.
+          Prebuilt binaries are cut on demand from the GitHub Actions release
+          workflow. Pick your platform &mdash; or
+          <a href="#build">build from source</a> if you'd rather.
         </p>
 
         <div class="platforms">
@@ -736,9 +747,12 @@
             <h3>macOS</h3>
             <p class="sub">Universal binary &middot; Apple Silicon + Intel</p>
             <div class="actions">
-              <a href="#build">Build from source →</a>
-              <a class="muted" href="https://github.com/robimez/loadcell/subscription">
-                Watch repo for releases
+              <a
+                class="btn-dl"
+                href="https://github.com/RobiMez/loadcell/releases/latest/download/loadcell-darwin-universal.tar.gz"
+              >Download .tar.gz</a>
+              <a class="muted" href="https://github.com/RobiMez/loadcell/releases">
+                All releases →
               </a>
             </div>
           </div>
@@ -750,11 +764,14 @@
               </svg>
             </div>
             <h3>Windows</h3>
-            <p class="sub">NSIS installer &middot; x64</p>
+            <p class="sub">Standalone .exe &middot; x64</p>
             <div class="actions">
-              <a href="#build">Build from source →</a>
-              <a class="muted" href="https://github.com/robimez/loadcell/subscription">
-                Watch repo for releases
+              <a
+                class="btn-dl"
+                href="https://github.com/RobiMez/loadcell/releases/latest/download/loadcell-windows-amd64.zip"
+              >Download .zip</a>
+              <a class="muted" href="https://github.com/RobiMez/loadcell/releases">
+                All releases →
               </a>
             </div>
           </div>
@@ -766,11 +783,14 @@
               </svg>
             </div>
             <h3>Linux</h3>
-            <p class="sub">Standalone binary &middot; any modern distro</p>
+            <p class="sub">Standalone binary &middot; amd64</p>
             <div class="actions">
-              <a href="#build">Build from source →</a>
-              <a class="muted" href="https://github.com/robimez/loadcell">
-                View repo
+              <a
+                class="btn-dl"
+                href="https://github.com/RobiMez/loadcell/releases/latest/download/loadcell-linux-amd64.tar.gz"
+              >Download .tar.gz</a>
+              <a class="muted" href="https://github.com/RobiMez/loadcell/releases">
+                All releases →
               </a>
             </div>
           </div>
@@ -827,7 +847,7 @@
 <span class="k">go</span> install github.com/wailsapp/wails/v2/cmd/wails@<span class="s">latest</span>
 
 <span class="c"># 2. Clone &amp; enter the repo</span>
-<span class="k">git</span> clone https://github.com/<span class="s">robimez</span>/loadcell.git
+<span class="k">git</span> clone https://github.com/<span class="s">RobiMez</span>/loadcell.git
 <span class="k">cd</span> loadcell
 
 <span class="c"># 3. Run in dev mode...</span>
@@ -844,11 +864,11 @@
         <div class="brand">
           <img src="loadcell.png" alt="" />
           LoadCell &middot;
-          <a href="https://github.com/robimez/loadcell/blob/main/LICENSE">GPLv3</a>
+          <a href="https://github.com/RobiMez/loadcell/blob/main/LICENSE">GPLv3</a>
         </div>
         <div class="foot-links">
-          <a href="https://github.com/robimez/loadcell">GitHub</a>
-          <a href="https://github.com/robimez/loadcell/issues">Issues</a>
+          <a href="https://github.com/RobiMez/loadcell">GitHub</a>
+          <a href="https://github.com/RobiMez/loadcell/issues">Issues</a>
         </div>
       </div>
     </footer>
