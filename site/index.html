@@ -112,6 +112,22 @@
       nav .links a:hover {
         color: var(--text);
       }
+      .nav-sponsor,
+      .foot-sponsor {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .nav-sponsor svg,
+      .foot-sponsor svg {
+        width: 13px;
+        height: 13px;
+        color: #c44d4d; /* warm heart, separate from the brand sage */
+      }
+      .nav-sponsor:hover svg,
+      .foot-sponsor:hover svg {
+        color: #b03939;
+      }
 
       /* ── Hero ──────────────────────────────────────── */
       header.hero {
@@ -515,6 +531,59 @@
         color: var(--accent-strong);
       }
 
+      /* ── Sponsor section ───────────────────────────── */
+      .sponsor-section {
+        padding: 56px 0 24px;
+      }
+      .sponsor-card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 28px 32px;
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 22px;
+        align-items: center;
+      }
+      .sponsor-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 14px;
+        background: rgba(196, 77, 77, 0.08);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: #c44d4d;
+      }
+      .sponsor-icon svg {
+        width: 30px;
+        height: 30px;
+      }
+      .sponsor-copy h3 {
+        margin: 0 0 4px;
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--text);
+      }
+      .sponsor-copy p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.55;
+      }
+      .sponsor-btn svg {
+        width: 16px;
+        height: 16px;
+      }
+      @media (max-width: 640px) {
+        .sponsor-card {
+          grid-template-columns: 1fr;
+          text-align: left;
+          padding: 22px;
+        }
+      }
+
       /* ── Footer ────────────────────────────────────── */
       footer {
         padding: 40px 0 56px;
@@ -631,7 +700,13 @@
         </a>
         <div class="links">
           <a href="#features">Features</a>
-          <a href="#build">Get it</a>
+          <a href="#download">Get it</a>
+          <a class="nav-sponsor" href="https://github.com/sponsors/RobiMez" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 21s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 5.65-7 10-7 10Z" />
+            </svg>
+            Sponsor
+          </a>
           <a class="gh-mobile" href="https://github.com/RobiMez/loadcell">GitHub →</a>
         </div>
       </nav>
@@ -949,6 +1024,36 @@
       </div>
     </section>
 
+    <section id="sponsor" class="sponsor-section">
+      <div class="wrap">
+        <div class="sponsor-card">
+          <div class="sponsor-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 21s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 5.65-7 10-7 10Z" />
+            </svg>
+          </div>
+          <div class="sponsor-copy">
+            <h3>Like it? Sponsor a few hours of build time.</h3>
+            <p>
+              LoadCell is free, open source, and built by one person in
+              between other things. If it saves you time, a small sponsorship
+              keeps the lights on for the next release.
+            </p>
+          </div>
+          <a
+            class="btn btn-primary sponsor-btn"
+            href="https://github.com/sponsors/RobiMez"
+            rel="noopener"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 21s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 5.65-7 10-7 10Z" />
+            </svg>
+            Sponsor on GitHub
+          </a>
+        </div>
+      </div>
+    </section>
+
     <footer>
       <div class="wrap foot-wrap">
         <div class="brand">
@@ -959,6 +1064,12 @@
         <div class="foot-links">
           <a href="https://github.com/RobiMez/loadcell">GitHub</a>
           <a href="https://github.com/RobiMez/loadcell/issues">Issues</a>
+          <a class="foot-sponsor" href="https://github.com/sponsors/RobiMez" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 21s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 5.65-7 10-7 10Z" />
+            </svg>
+            Sponsor
+          </a>
         </div>
       </div>
     </footer>
