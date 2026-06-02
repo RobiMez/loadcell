@@ -356,46 +356,96 @@
         border-radius: 999px;
       }
 
-      /* Collapsible Gatekeeper hint under the macOS card. */
-      .gk-note {
-        margin-top: 12px;
+      /* Gatekeeper notice — full-width row under the platforms grid, plus
+         a compact echo on the hero CTA. Both share the dashed-rust palette
+         used for app-side cautions. */
+      .gk-row,
+      .gk-hero {
+        margin: 22px 0 0;
         border: 1px dashed var(--line-strong);
-        border-radius: 6px;
-        padding: 0;
+        border-radius: 8px;
         background: var(--surface-2);
-        font-size: 12px;
+        font-size: 13px;
         color: var(--muted);
       }
-      .gk-note summary {
+      .gk-hero {
+        display: inline-block;
+        margin-top: 14px;
+        font-size: 12px;
+        max-width: 520px;
+        text-align: left;
+      }
+      .gk-row summary,
+      .gk-hero summary {
         cursor: pointer;
         list-style: none;
-        display: inline-flex;
+        display: flex;
         align-items: center;
-        gap: 6px;
-        padding: 8px 10px;
+        gap: 8px;
+        padding: 10px 14px;
         color: var(--rate);
         font-weight: 500;
         user-select: none;
       }
-      .gk-note summary::-webkit-details-marker { display: none; }
-      .gk-note summary svg {
-        width: 14px;
-        height: 14px;
+      .gk-row summary::-webkit-details-marker,
+      .gk-hero summary::-webkit-details-marker { display: none; }
+      .gk-row summary svg,
+      .gk-hero summary svg {
+        width: 15px;
+        height: 15px;
+        flex-shrink: 0;
       }
-      .gk-note[open] summary {
+      .gk-row-eyebrow {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--rate);
+        background: rgba(138, 94, 54, 0.12);
+        padding: 2px 7px;
+        border-radius: 999px;
+      }
+      .gk-row-title {
+        color: var(--text);
+        font-weight: 500;
+      }
+      .gk-row-caret {
+        margin-left: auto;
+        color: var(--muted);
+        font-size: 12px;
+        transition: transform 160ms;
+      }
+      .gk-row[open] .gk-row-caret,
+      .gk-hero[open] .gk-row-caret {
+        transform: rotate(180deg);
+      }
+      .gk-row[open] summary,
+      .gk-hero[open] summary {
         border-bottom: 1px dashed var(--line);
-        padding-bottom: 8px;
       }
-      .gk-note p {
-        margin: 10px 12px 6px;
+      .gk-row-body {
+        padding: 12px 16px 14px;
+      }
+      .gk-row-body p {
+        margin: 0 0 8px;
         line-height: 1.55;
       }
-      .gk-note ol {
-        margin: 0 12px 12px;
-        padding-left: 18px;
-        line-height: 1.65;
+      .gk-row-body ol {
+        margin: 0;
+        padding-left: 20px;
+        line-height: 1.7;
       }
-      .gk-note code {
+      .gk-row-body pre {
+        margin: 6px 0 0;
+        padding: 8px 10px;
+        background: var(--inset);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        overflow-x: auto;
+        font-size: 11px;
+      }
+      .gk-row-body code,
+      .gk-row-body pre code {
         font-family: "JetBrains Mono", ui-monospace, monospace;
         font-size: 11px;
         background: var(--inset);
@@ -404,7 +454,12 @@
         border-radius: 3px;
         border: 1px solid var(--line);
       }
-      .gk-note em { color: var(--text); font-style: italic; }
+      .gk-row-body pre code {
+        background: transparent;
+        border: none;
+        padding: 0;
+      }
+      .gk-row-body em { color: var(--text); font-style: italic; }
 
       /* Download-count line under each platform sub-heading. */
       .dl-count {
@@ -804,6 +859,26 @@
             <a href="#download">pick a different platform</a>
             &middot; <a href="#build">build from source</a>
           </p>
+          <details class="gk-hero" id="gk-hero" hidden>
+            <summary>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 8v4" />
+                <path d="M12 16h.01" />
+              </svg>
+              Gatekeeper will flag it
+              <span class="gk-row-caret" aria-hidden="true">▾</span>
+            </summary>
+            <div class="gk-row-body">
+              <p>
+                The binary isn't notarized (yet), so first launch shows
+                "<em>cannot be opened…</em>." Right-click <code>loadcell.app</code>
+                &rarr; <strong>Open</strong>, or run:
+              </p>
+              <pre><code>xattr -dr com.apple.quarantine /Applications/loadcell.app</code></pre>
+            </div>
+          </details>
         </div>
 
         <div class="hero-shot" aria-hidden="false">
@@ -962,26 +1037,6 @@
                 All releases →
               </a>
             </div>
-            <details class="gk-note">
-              <summary>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M12 8v4" />
-                  <path d="M12 16h.01" />
-                </svg>
-                Gatekeeper will flag it
-              </summary>
-              <p>
-                The binary isn't notarized (yet), so the first launch shows
-                "<em>cannot be opened because the developer cannot be
-                verified</em>." Two quick ways past it:
-              </p>
-              <ol>
-                <li>Right-click <code>loadcell.app</code> &rarr; <strong>Open</strong>, then confirm in the dialog.</li>
-                <li>Or in Terminal: <code>xattr -dr com.apple.quarantine /Applications/loadcell.app</code></li>
-              </ol>
-            </details>
           </div>
 
           <div class="platform" id="card-windows">
@@ -1030,6 +1085,31 @@
             </div>
           </div>
         </div>
+
+        <details class="gk-row" id="gk-row">
+          <summary>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 8v4" />
+              <path d="M12 16h.01" />
+            </svg>
+            <span class="gk-row-eyebrow">macOS</span>
+            <span class="gk-row-title">Gatekeeper will flag the binary on first launch</span>
+            <span class="gk-row-caret" aria-hidden="true">▾</span>
+          </summary>
+          <div class="gk-row-body">
+            <p>
+              The binary isn't notarized (yet), so the first launch shows
+              "<em>cannot be opened because the developer cannot be
+              verified</em>." Two quick ways past it:
+            </p>
+            <ol>
+              <li>Right-click <code>loadcell.app</code> &rarr; <strong>Open</strong>, then confirm in the dialog.</li>
+              <li>Or in Terminal: <code>xattr -dr com.apple.quarantine /Applications/loadcell.app</code></li>
+            </ol>
+          </div>
+        </details>
       </div>
     </section>
 
@@ -1105,7 +1185,7 @@
           <div class="sponsor-copy">
             <h3>Like it? Sponsor a few hours of build time.</h3>
             <p>
-              LoadCell is free, open source, and built by one person ( <a href="https://robi.work">robi</a> ) in
+              LoadCell is free, open source, and built by one person ( <a class="underline" href="https://robi.work">robi</a> ) in
               between a couple day jobs. If it saves you time ( and the 9$/m postman subscription), a small sponsorship helps fund more claude tokens & food ( in that order ).
             </p>
           </div>
@@ -1192,6 +1272,15 @@
           }
           var card = document.getElementById(asset.cardId);
           if (card) card.classList.add("your-platform");
+
+          // Echo the Gatekeeper notice next to the hero CTA + auto-open the
+          // row notice when we know the visitor is on macOS.
+          if (os === "macos") {
+            var heroNote = document.getElementById("gk-hero");
+            if (heroNote) heroNote.hidden = false;
+            var row = document.getElementById("gk-row");
+            if (row) row.setAttribute("open", "");
+          }
         }
       })();
 
