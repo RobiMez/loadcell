@@ -1,0 +1,13 @@
+{
+  "name": "loadcell-echo-server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Tiny Express target for sanity-checking that LoadCell requests actually land.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

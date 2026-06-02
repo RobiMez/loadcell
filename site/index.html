@@ -1,0 +1,856 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LoadCell — HTTP load testing on your desktop</title>
+    <meta
+      name="description"
+      content="LoadCell is a native desktop HTTP load tester. Run constant, ramp, or curve workloads and watch live RPS, latency percentiles, and error breakdowns."
+    />
+    <meta property="og:title" content="LoadCell" />
+    <meta
+      property="og:description"
+      content="HTTP load testing, on your desktop. Constant, ramp, and curve workloads with live p50/p95/p99 latency."
+    />
+    <meta property="og:image" content="loadcell.png" />
+    <meta name="theme-color" content="#485941" />
+
+    <link rel="icon" type="image/png" href="loadcell.png" />
+    <link rel="apple-touch-icon" href="loadcell.png" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      :root {
+        --bg: #fafbfa;
+        --surface: #f1f4ef;
+        --surface-2: rgba(72, 89, 65, 0.05);
+        --inset: #ffffff;
+        --line: rgba(72, 89, 65, 0.12);
+        --line-strong: rgba(72, 89, 65, 0.24);
+        --text: #1f2a1d;
+        --muted: #5f6c5f;
+        --muted-2: #8c948b;
+        --accent: #485941;
+        --accent-strong: #364432;
+        --sage: #9fb8ad;
+        --sage-tint: rgba(159, 184, 173, 0.2);
+        --warn: #8a7236;
+        --rate: #8a5e36;
+        --err: #783232;
+        --neterr: #5a2424;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Lexend", -apple-system, BlinkMacSystemFont, "Segoe UI",
+          Roboto, sans-serif;
+        font-weight: 400;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        line-height: 1.55;
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        color: var(--accent-strong);
+      }
+
+      .wrap {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 0 28px;
+      }
+
+      /* ── Nav ───────────────────────────────────────── */
+      nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 22px 0;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 600;
+        font-size: 17px;
+        letter-spacing: -0.01em;
+        color: var(--text);
+      }
+      .brand img {
+        width: 28px;
+        height: 28px;
+        display: block;
+      }
+      nav .links {
+        display: flex;
+        gap: 22px;
+        font-size: 14px;
+        color: var(--muted);
+      }
+      nav .links a {
+        color: var(--muted);
+      }
+      nav .links a:hover {
+        color: var(--text);
+      }
+
+      /* ── Hero ──────────────────────────────────────── */
+      header.hero {
+        padding: 80px 0 0;
+        position: relative;
+        overflow: hidden;
+        text-align: center;
+      }
+      .hero-text {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 0 28px;
+      }
+      h1 {
+        font-size: 64px;
+        line-height: 1.02;
+        letter-spacing: -0.028em;
+        font-weight: 600;
+        margin: 0 0 20px;
+        color: var(--text);
+      }
+      h1 .accent {
+        color: var(--accent);
+      }
+      .lede {
+        font-size: 20px;
+        color: var(--muted);
+        margin: 0 auto 36px;
+        max-width: 580px;
+        line-height: 1.55;
+      }
+
+      .cta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+        justify-content: center;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 13px 22px;
+        font-family: inherit;
+        font-size: 15px;
+        font-weight: 500;
+        border-radius: 10px;
+        border: 1px solid transparent;
+        cursor: pointer;
+        transition: transform 0.15s ease, background 0.15s ease,
+          border-color 0.15s ease, color 0.15s ease;
+      }
+      .btn-primary {
+        background: var(--accent);
+        color: #fff;
+      }
+      .btn-primary:hover {
+        background: var(--accent-strong);
+        color: #fff;
+        transform: translateY(-1px);
+      }
+      .btn-secondary {
+        background: var(--inset);
+        color: var(--text);
+        border-color: var(--line-strong);
+      }
+      .btn-secondary:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+        transform: translateY(-1px);
+      }
+      .btn svg {
+        width: 18px;
+        height: 18px;
+      }
+      .platform-note {
+        font-size: 13px;
+        color: var(--muted-2);
+        margin: 14px 0 0;
+      }
+      .platform-note a {
+        color: var(--muted);
+        border-bottom: 1px dotted var(--muted-2);
+      }
+
+      /* ── Hero screenshot ───────────────────────────── */
+      .hero-shot {
+        position: relative;
+        max-width: 1280px;
+        margin: 64px auto 0;
+        padding: 0 28px;
+        /* Fade the bottom into the page background */
+        -webkit-mask-image: linear-gradient(
+          to bottom,
+          #000 0%,
+          #000 62%,
+          rgba(0, 0, 0, 0.55) 84%,
+          transparent 100%
+        );
+        mask-image: linear-gradient(
+          to bottom,
+          #000 0%,
+          #000 62%,
+          rgba(0, 0, 0, 0.55) 84%,
+          transparent 100%
+        );
+      }
+      .hero-shot img {
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        box-shadow:
+          0 40px 80px -32px rgba(72, 89, 65, 0.28),
+          0 16px 32px -16px rgba(72, 89, 65, 0.16);
+        background: var(--inset);
+      }
+
+      /* ── Sections ──────────────────────────────────── */
+      section {
+        padding: 72px 0;
+      }
+      .section-eyebrow {
+        font-size: 13px;
+        color: var(--accent);
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 10px;
+      }
+      h2 {
+        font-size: 34px;
+        letter-spacing: -0.02em;
+        font-weight: 600;
+        margin: 0 0 14px;
+      }
+      .section-lede {
+        font-size: 17px;
+        color: var(--muted);
+        max-width: 620px;
+        margin: 0 0 44px;
+      }
+
+      .features {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 22px;
+      }
+      .feature {
+        background: var(--inset);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 26px;
+        transition: border-color 0.18s ease, transform 0.18s ease;
+      }
+      .feature:hover {
+        border-color: var(--line-strong);
+        transform: translateY(-2px);
+      }
+      .feature .icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 9px;
+        background: var(--sage-tint);
+        color: var(--accent);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 16px;
+      }
+      .feature .icon svg {
+        width: 20px;
+        height: 20px;
+      }
+      .feature h3 {
+        font-size: 16px;
+        font-weight: 600;
+        margin: 0 0 6px;
+      }
+      .feature p {
+        margin: 0;
+        font-size: 14px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      /* ── Download section ──────────────────────────── */
+      .download {
+        background: var(--surface);
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+      }
+      .platforms {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+      }
+      .platform {
+        background: var(--inset);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+      }
+      .platform .pico {
+        font-size: 28px;
+        margin-bottom: 12px;
+        color: var(--accent);
+      }
+      .platform h3 {
+        font-size: 17px;
+        margin: 0 0 4px;
+        font-weight: 600;
+      }
+      .platform .sub {
+        font-size: 13px;
+        color: var(--muted);
+        margin: 0 0 18px;
+      }
+      .platform .actions {
+        margin-top: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .platform .actions a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-radius: 8px;
+        border: 1px solid var(--line-strong);
+        font-size: 14px;
+        color: var(--text);
+        background: var(--inset);
+        transition: all 0.15s ease;
+      }
+      .platform .actions a:hover {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+      }
+      .platform .actions a.muted {
+        color: var(--muted);
+        border-style: dashed;
+      }
+      .platform .actions a.muted:hover {
+        background: var(--surface);
+        color: var(--text);
+        border-color: var(--line-strong);
+        border-style: dashed;
+      }
+
+      /* ── Build from source ─────────────────────────── */
+      .build-grid {
+        display: grid;
+        grid-template-columns: 0.9fr 1.1fr;
+        gap: 44px;
+        align-items: start;
+      }
+      pre.code {
+        background: #1f2a1d;
+        color: #e8eee5;
+        padding: 22px 24px;
+        border-radius: 12px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 13.5px;
+        line-height: 1.7;
+        overflow-x: auto;
+        margin: 0;
+        border: 1px solid #2a3626;
+      }
+      pre.code .c { color: #8c948b; }
+      pre.code .k { color: #9fb8ad; }
+      pre.code .s { color: #c9d4be; }
+      .req-list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .req-list li {
+        padding: 14px 0;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        gap: 14px;
+        align-items: flex-start;
+      }
+      .req-list li:last-child {
+        border-bottom: none;
+      }
+      .req-list .num {
+        flex-shrink: 0;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: var(--sage-tint);
+        color: var(--accent);
+        font-size: 13px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .req-list strong {
+        display: block;
+        font-weight: 500;
+        color: var(--text);
+      }
+      .req-list .req-sub {
+        font-size: 13.5px;
+        color: var(--muted);
+      }
+      .req-list code {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12.5px;
+        background: var(--surface-2);
+        padding: 1px 6px;
+        border-radius: 4px;
+        color: var(--accent-strong);
+      }
+
+      /* ── Footer ────────────────────────────────────── */
+      footer {
+        padding: 40px 0 56px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 13.5px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 16px;
+      }
+      footer .brand {
+        font-size: 14px;
+        color: var(--muted);
+      }
+      footer .brand img {
+        width: 22px;
+        height: 22px;
+        opacity: 0.85;
+      }
+      footer .foot-wrap {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 16px;
+        width: 100%;
+      }
+      footer .foot-links {
+        display: flex;
+        gap: 22px;
+      }
+      footer a {
+        color: var(--muted);
+      }
+      footer a:hover {
+        color: var(--accent);
+      }
+      footer .brand a {
+        color: inherit;
+      }
+      footer .brand a:hover {
+        color: var(--accent);
+      }
+
+      /* ── Focus styles (keyboard) ───────────────────── */
+      :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+        border-radius: 4px;
+      }
+      .btn:focus-visible,
+      .platform .actions a:focus-visible {
+        outline-offset: 2px;
+      }
+
+      /* ── Reduced motion ────────────────────────────── */
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          animation-duration: 0.001ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.001ms !important;
+        }
+      }
+
+      /* ── Responsive ────────────────────────────────── */
+      @media (max-width: 880px) {
+        h1 {
+          font-size: 40px;
+          letter-spacing: -0.022em;
+        }
+        .lede {
+          font-size: 17px;
+        }
+        .features,
+        .platforms {
+          grid-template-columns: 1fr;
+        }
+        .build-grid {
+          grid-template-columns: 1fr;
+          gap: 28px;
+        }
+        section {
+          padding: 56px 0;
+        }
+        header.hero {
+          padding: 40px 0 0;
+        }
+        .hero-shot {
+          margin-top: 44px;
+        }
+        nav .links a:not(.gh-mobile) {
+          display: none;
+        }
+        /* 44px touch targets on touch viewports */
+        .platform .actions a {
+          padding: 13px 16px;
+          min-height: 44px;
+        }
+        .btn {
+          padding: 14px 22px;
+          min-height: 44px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <nav>
+        <a href="#" class="brand">
+          <img src="loadcell.png" alt="LoadCell logo" />
+          LoadCell
+        </a>
+        <div class="links">
+          <a href="#features">Features</a>
+          <a href="#build">Get it</a>
+          <a class="gh-mobile" href="https://github.com/robimez/loadcell">GitHub →</a>
+        </div>
+      </nav>
+
+      <header class="hero">
+        <div class="hero-text">
+          <h1>
+            HTTP load testing,<br />
+            <span class="accent">on your desktop.</span>
+          </h1>
+          <p class="lede">
+            LoadCell is a native app for hammering HTTP endpoints and watching
+            what happens. Constant, ramp, or hand-drawn load curves &mdash;
+            with live RPS, latency percentiles, and error breakdowns.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="#build">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m8 6-6 6 6 6" />
+                <path d="m16 6 6 6-6 6" />
+              </svg>
+              Build from source
+            </a>
+            <a
+              class="btn btn-secondary"
+              href="https://github.com/robimez/loadcell"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.69-3.87-1.54-3.87-1.54-.52-1.33-1.27-1.68-1.27-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.69 1.25 3.34.95.1-.74.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.46.11-3.04 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.78 0c2.21-1.49 3.18-1.18 3.18-1.18.62 1.58.23 2.75.11 3.04.74.81 1.18 1.84 1.18 3.1 0 4.43-2.7 5.4-5.27 5.68.41.36.78 1.06.78 2.14 0 1.55-.01 2.79-.01 3.17 0 .31.21.68.8.56C20.21 21.38 23.5 17.07 23.5 12c0-6.35-5.15-11.5-11.5-11.5Z"
+                />
+              </svg>
+              View on GitHub
+            </a>
+          </div>
+          <p class="platform-note">
+            No prebuilt binaries yet &mdash; if you have Go and Node, building
+            takes about three minutes.
+          </p>
+        </div>
+
+        <div class="hero-shot" aria-hidden="false">
+          <img
+            src="loadcell-app.png"
+            alt="LoadCell results dashboard: saved requests sidebar, request URL with success and latency metrics, and a stacked bar chart of 2xx versus failed requests over a 100-second run."
+            width="3174"
+            height="2032"
+            loading="eager"
+            decoding="async"
+          />
+        </div>
+      </header>
+    </div>
+
+    <section id="features">
+      <div class="wrap">
+        <div class="section-eyebrow">What it does</div>
+        <h2>Built for the long press of "go."</h2>
+        <p class="section-lede">
+          Designed around the actual rhythm of load testing: pick a target,
+          shape the load, watch it unfold, and read the result without
+          deciphering a wall of JSON.
+        </p>
+
+        <div class="features">
+          <div class="feature">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 3v18h18" />
+                <path d="m7 14 4-4 4 4 5-7" />
+              </svg>
+            </div>
+            <h3>Live metrics</h3>
+            <p>
+              p50, p95, p99 latency, RPS, and error breakdowns by 4xx / 429 /
+              5xx / network &mdash; streaming as the test runs, not after.
+            </p>
+          </div>
+
+          <div class="feature">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 18h4l3-12 4 18 3-9h4" />
+              </svg>
+            </div>
+            <h3>Constant, ramp, or curve</h3>
+            <p>
+              Hold steady load, linearly ramp users, or draw a custom curve
+              with linear / exponential / step segments and optional noise.
+            </p>
+          </div>
+
+          <div class="feature">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <path d="M3 9h18" />
+                <path d="M8 14h8" />
+                <path d="M8 17h5" />
+              </svg>
+            </div>
+            <h3>Saved requests</h3>
+            <p>
+              Persist method, URL, headers, and body as named templates so
+              you can rerun the same scenario across builds and environments.
+            </p>
+          </div>
+
+          <div class="feature">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="4" width="20" height="14" rx="2" />
+                <path d="M8 22h8" />
+                <path d="M12 18v4" />
+              </svg>
+            </div>
+            <h3>Native, not a CLI</h3>
+            <p>
+              Wails-powered desktop app: real windows, real keyboard
+              shortcuts, no terminal panes &mdash; with a Go engine doing the
+              actual work.
+            </p>
+          </div>
+
+          <div class="feature">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s-8-4.5-8-12V5l8-3 8 3v5c0 7.5-8 12-8 12Z" />
+              </svg>
+            </div>
+            <h3>Local only</h3>
+            <p>
+              No accounts, no telemetry, no cloud round-trips. Your request
+              templates live on your disk, and your traffic goes straight to
+              the target.
+            </p>
+          </div>
+
+          <div class="feature">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M16 18 22 12 16 6" />
+                <path d="M8 6 2 12l6 6" />
+              </svg>
+            </div>
+            <h3>Open source</h3>
+            <p>
+              Go engine, Svelte UI. Read the code, file an issue, send a PR,
+              or just fork it and make it yours.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="download" class="download">
+      <div class="wrap">
+        <div class="section-eyebrow">Get it</div>
+        <h2>Built from source, for now.</h2>
+        <p class="section-lede">
+          Prebuilt binaries aren&rsquo;t cut yet &mdash; the Wails build pipeline
+          is in place, releases will land on GitHub. Until then, every platform
+          ships the same way: <a href="#build">three commands</a>.
+        </p>
+
+        <div class="platforms">
+          <div class="platform">
+            <div class="pico" aria-hidden="true">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M17.05 12.04c-.03-2.7 2.21-4 2.31-4.06-1.26-1.84-3.22-2.09-3.92-2.12-1.67-.17-3.26.98-4.11.98-.86 0-2.16-.95-3.55-.93-1.83.03-3.51 1.06-4.45 2.7-1.9 3.29-.49 8.16 1.36 10.83.9 1.31 1.97 2.78 3.37 2.73 1.36-.06 1.87-.88 3.51-.88 1.64 0 2.1.88 3.53.85 1.46-.02 2.38-1.33 3.27-2.65 1.03-1.52 1.46-2.99 1.48-3.07-.03-.01-2.83-1.09-2.86-4.32M14.32 4.18c.75-.91 1.26-2.17 1.12-3.43-1.08.04-2.39.72-3.17 1.62-.7.79-1.31 2.07-1.15 3.31 1.21.09 2.44-.61 3.2-1.5" />
+              </svg>
+            </div>
+            <h3>macOS</h3>
+            <p class="sub">Universal binary &middot; Apple Silicon + Intel</p>
+            <div class="actions">
+              <a href="#build">Build from source →</a>
+              <a class="muted" href="https://github.com/robimez/loadcell/subscription">
+                Watch repo for releases
+              </a>
+            </div>
+          </div>
+
+          <div class="platform">
+            <div class="pico" aria-hidden="true">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M2 4.5 10.5 3v8H2V4.5ZM2 12.5h8.5V21L2 19.5v-7ZM11.5 2.8 22 1v10H11.5V2.8ZM11.5 13H22v10l-10.5-1.5V13Z" />
+              </svg>
+            </div>
+            <h3>Windows</h3>
+            <p class="sub">NSIS installer &middot; x64</p>
+            <div class="actions">
+              <a href="#build">Build from source →</a>
+              <a class="muted" href="https://github.com/robimez/loadcell/subscription">
+                Watch repo for releases
+              </a>
+            </div>
+          </div>
+
+          <div class="platform">
+            <div class="pico" aria-hidden="true">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2c-1.55 0-2.3 1.4-2.3 3.2 0 .4-.1.8-.3 1.1-.4.6-1 1.1-1.4 1.7-.9 1.2-1.2 2.6-1.2 4 0 .4 0 .8.1 1.2-.7.6-1.4 1.5-1.8 2.5-.4 1.1-.4 2.3.1 3 .3.4.7.6 1.1.7-.2.3-.3.7-.3 1.1 0 .9.7 1.5 1.7 1.5.4 0 .9-.1 1.4-.3.5.4 1.1.6 1.7.6h2c.6 0 1.2-.2 1.7-.6.5.2 1 .3 1.4.3 1 0 1.7-.6 1.7-1.5 0-.4-.1-.8-.3-1.1.4-.1.8-.3 1.1-.7.5-.7.5-1.9.1-3-.4-1-1.1-1.9-1.8-2.5.1-.4.1-.8.1-1.2 0-1.4-.3-2.8-1.2-4-.4-.6-1-1.1-1.4-1.7-.2-.3-.3-.7-.3-1.1C14.3 3.4 13.55 2 12 2Zm-1.5 4.8c.4 0 .7.5.7 1.1s-.3 1.1-.7 1.1c-.4 0-.7-.5-.7-1.1s.3-1.1.7-1.1Zm3 0c.4 0 .7.5.7 1.1s-.3 1.1-.7 1.1c-.4 0-.7-.5-.7-1.1s.3-1.1.7-1.1Zm-1.5 2.6c.8 0 1.5.5 1.8 1.2-.5.4-1.1.6-1.8.6s-1.3-.2-1.8-.6c.3-.7 1-1.2 1.8-1.2Z" />
+              </svg>
+            </div>
+            <h3>Linux</h3>
+            <p class="sub">Standalone binary &middot; any modern distro</p>
+            <div class="actions">
+              <a href="#build">Build from source →</a>
+              <a class="muted" href="https://github.com/robimez/loadcell">
+                View repo
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="build">
+      <div class="wrap">
+        <div class="section-eyebrow">Build from source</div>
+        <h2>Three commands.</h2>
+        <p class="section-lede">
+          LoadCell uses
+          <a href="https://wails.io">Wails</a> for the desktop shell. If you
+          have Go and Node installed, you're already most of the way there.
+        </p>
+
+        <div class="build-grid">
+          <div>
+            <ol class="req-list">
+              <li>
+                <span class="num">1</span>
+                <div>
+                  <strong>Install prerequisites</strong>
+                  <div class="req-sub">
+                    <code>Go 1.21+</code>, <code>Node 18+</code>, and the
+                    <code>wails</code> CLI.
+                  </div>
+                </div>
+              </li>
+              <li>
+                <span class="num">2</span>
+                <div>
+                  <strong>Clone the repo</strong>
+                  <div class="req-sub">
+                    Grab the source from GitHub.
+                  </div>
+                </div>
+              </li>
+              <li>
+                <span class="num">3</span>
+                <div>
+                  <strong>Build or run</strong>
+                  <div class="req-sub">
+                    <code>wails dev</code> for hot reload, or
+                    <code>wails build</code> for a redistributable.
+                  </div>
+                </div>
+              </li>
+            </ol>
+          </div>
+
+          <pre class="code"><span class="c"># 1. Install the Wails CLI (one-time)</span>
+<span class="k">go</span> install github.com/wailsapp/wails/v2/cmd/wails@<span class="s">latest</span>
+
+<span class="c"># 2. Clone &amp; enter the repo</span>
+<span class="k">git</span> clone https://github.com/<span class="s">robimez</span>/loadcell.git
+<span class="k">cd</span> loadcell
+
+<span class="c"># 3. Run in dev mode...</span>
+<span class="k">wails</span> dev
+
+<span class="c"># ...or build a redistributable</span>
+<span class="k">wails</span> build</pre>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="wrap foot-wrap">
+        <div class="brand">
+          <img src="loadcell.png" alt="" />
+          LoadCell &middot;
+          <a href="https://github.com/robimez/loadcell/blob/main/LICENSE">GPLv3</a>
+        </div>
+        <div class="foot-links">
+          <a href="https://github.com/robimez/loadcell">GitHub</a>
+          <a href="https://github.com/robimez/loadcell/issues">Issues</a>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

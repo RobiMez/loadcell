@@ -1,0 +1,54 @@
+/* ───── Logo-derived palette — forest green + white ─────
+ * Two brand colors: #485941 (logo mark) on #ffffff. Everything else is a
+ * tint or shade of the logo green; state colors are restrained earthtones
+ * so the chart stays readable without competing with the brand.
+ */
+:root {
+  /* Surfaces — cool, near-white */
+  --bg:           #fafbfa;                    /* page background — white with a faint green cast */
+  --surface:      #f1f4ef;                    /* elevated panels — pale wash of accent */
+  --surface-2:    rgba(72, 89, 65, 0.05);     /* faint forest tint */
+  --inset:        #ffffff;                    /* input bg — pure white from the logo */
+
+  /* Lines / dividers — forest-tinted */
+  --line:         rgba(72, 89, 65, 0.10);
+  --line-strong:  rgba(72, 89, 65, 0.22);
+
+  /* Text — green-charcoal */
+  --text:         #1f2a1d;        /* very dark forest */
+  --muted:        #5f6c5f;        /* olive-charcoal */
+  --muted-2:      #8c948b;        /* lightest readable */
+
+  /* Accents — the logo */
+  --accent:        #485941;       /* logo mark — primary action */
+  --accent-strong: #364432;       /* deeper forest — hover/active */
+  --sage:          #9fb8ad;       /* sage — lighter brand tint */
+  --sage-tint:     rgba(159, 184, 173, 0.20);
+  --sage-tint-2:   rgba(159, 184, 173, 0.10);
+
+  /* Semantic — low-chroma earthtones, restrained next to the brand */
+  --warn:    #8a7236;       /* 4xx muted ochre */
+  --rate:    #8a5e36;       /* 429 muted rust  */
+  --err:     #783232;       /* 5xx muted brick */
+  --neterr:  #5a2424;       /* network — deeper oxide */
+}
+
+html {
+  background-color: var(--bg);
+  color: var(--text);
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  background-color: var(--bg);
+  font-family: "Lexend", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", sans-serif;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+  min-height: 100vh;
+}
