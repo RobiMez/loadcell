@@ -78,7 +78,7 @@ jobs:
           tar -czf ../../${{ matrix.artifact }} loadcell.app
 
       - name: Package · Linux
-        if: matrix.os == 'ubuntu-latest'
+        if: startsWith(matrix.os, 'ubuntu')
         run: |
           cd build/bin
           tar -czf ../../${{ matrix.artifact }} loadcell
