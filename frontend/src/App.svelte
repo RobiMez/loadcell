@@ -290,7 +290,7 @@
   // the info sheet, persisted via localStorage so the choice survives
   // restarts. 2000 is the "now you're on your own" threshold above which we
   // warn but still allow.
-  const MAX_WORKERS_DEFAULT = 500;
+  const MAX_WORKERS_DEFAULT = 2000;
   const MAX_WORKERS_FLOOR = 10;
   const MAX_WORKERS_CEIL = 20000; // a hard sanity ceiling for typed input
   function loadMaxWorkers(): number {
@@ -658,6 +658,30 @@
     selectedPtIdx = -1;
     noise = 0;
     lastClampDur = safeDur;
+  }
+
+  // Numeric handle on the curve's peak. Scales all points proportionally so
+  // the shape is preserved. If the curve is currently flat at 0, raise the
+  // non-anchor points to the new peak so the user gets a meaningful curve
+  // instead of an inert one.
+  function onCurvePeakInput(e: Event) {
+    const raw = parseInt((e.target as HTMLInputElement).value, 10);
+    if (!Number.isFinite(raw)) return;
+    const target = clampUsers(raw);
+    const cur = curveMaxUsers;
+    if (cur <= 0) {
+      const pts = curvePoints.map((p, i) => ({
+        ...p,
+        users: i === 0 ? p.users : target, // keep the t=0 anchor as-is
+      }));
+      curvePoints = pts;
+      return;
+    }
+    const ratio = target / cur;
+    curvePoints = curvePoints.map((p) => ({
+      ...p,
+      users: clampUsers(p.users * ratio),
+    }));
   }
 
   // Keep the keypoints inside the chart when the user shrinks Test duration.
@@ -1997,13 +2021,24 @@
               </label>
             {:else}
               <label class="field">
+                <span class="k">Peak workers <span class="k-hint">max {MAX_WORKERS}</span></span>
+                <input
+                  type="number"
+                  min="0"
+                  max={MAX_WORKERS}
+                  value={curveMaxUsers}
+                  on:input={onCurvePeakInput}
+                  disabled={running}
+                />
+              </label>
+              <label class="field">
                 <span class="k">Test duration (s)</span>
                 <input type="number" bind:value={durationSecs} min="1" disabled={running} />
               </label>
               <div class="curve-tools">
                 <span class="k">Curve</span>
                 <button class="ct-btn" type="button" on:click={resetCurve} disabled={running}>Reset</button>
-                <span class="ct-hint">Click to add · drag to move · right-click to delete</span>
+                <span class="ct-hint">Click empty space to add · drag to move · right-click to delete · click a point to edit easing</span>
               </div>
               <div class="noise-row">
                 <span class="k">Noise <span class="noise-val">{Math.round(noise * 100)}%</span></span>
@@ -2427,8 +2462,8 @@
           />
           {#if MAX_WORKERS > 2000}
             <p class="info-warn" role="alert">
-              <strong>Above 2000.</strong> If your laptop's fan starts arguing
-              with you or your kernel panics, that's on you — not me.
+              <strong>Above 2000.</strong> If your laptop melts or starts crying
+             or your kernel panics, know that you brought it on yourself lol :) .
             </p>
           {/if}
         </div>
