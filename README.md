@@ -111,9 +111,35 @@ wails build
 
 On Linux you'll also need GTK/WebKit headers:
 
+<details>
+<summary><strong>Ubuntu 22.04 and earlier</strong> (webkit2gtk-4.0)</summary>
+
 ```bash
 sudo apt install libgtk-3-dev libwebkit2gtk-4.0-dev build-essential pkg-config
 ```
+
+Then build normally:
+
+```bash
+wails dev          # or: wails build
+```
+
+</details>
+
+<details open>
+<summary><strong>Ubuntu 24.04+</strong> (webkit2gtk-4.1)</summary>
+
+```bash
+sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev build-essential pkg-config
+```
+
+Pass the `webkit2_41` build tag:
+
+```bash
+wails dev -tags webkit2_41          # or: wails build -tags webkit2_41
+```
+
+</details>
 
 ---
 
