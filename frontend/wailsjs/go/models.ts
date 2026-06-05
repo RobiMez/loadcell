@@ -132,6 +132,22 @@ export namespace engine {
 
 export namespace main {
 	
+	export class FlowRunStep {
+	    name: string;
+	    method: string;
+	    url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FlowRunStep(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.method = source["method"];
+	        this.url = source["url"];
+	    }
+	}
 	export class HeaderKV {
 	    key: string;
 	    value: string;
@@ -152,6 +168,9 @@ export namespace main {
 	    durationSecs: number;
 	    curve?: engine.CurvePoint[];
 	    noise?: number;
+	    flowId?: string;
+	    flowName?: string;
+	    steps?: FlowRunStep[];
 	
 	    static createFrom(source: any = {}) {
 	        return new RunConfig(source);
@@ -164,6 +183,9 @@ export namespace main {
 	        this.durationSecs = source["durationSecs"];
 	        this.curve = this.convertValues(source["curve"], engine.CurvePoint);
 	        this.noise = source["noise"];
+	        this.flowId = source["flowId"];
+	        this.flowName = source["flowName"];
+	        this.steps = this.convertValues(source["steps"], FlowRunStep);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
