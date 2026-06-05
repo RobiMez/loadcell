@@ -15,6 +15,7 @@ type App struct {
 	engine   *engine.Engine
 	requests *requestStore
 	runs     *runStore
+	flows    *flowStore
 	sample   *sampleCache
 }
 
@@ -24,6 +25,7 @@ func NewApp() *App {
 		engine:   engine.New(),
 		requests: newRequestStore(),
 		runs:     newRunStore(),
+		flows:    newFlowStore(),
 		sample:   newSampleCache(),
 	}
 }
@@ -87,4 +89,23 @@ func (a *App) DeleteRun(id string) error {
 		return errors.New("id is required")
 	}
 	return a.runs.Delete(id)
+}
+
+// ListFlows returns saved flows newest-first.
+func (a *App) ListFlows() ([]SavedFlow, error) {
+	return a.flows.List()
+}
+
+// SaveFlow creates (when ID is empty) or updates the given flow, and
+// returns the persisted version with timestamps and ID populated.
+func (a *App) SaveFlow(f SavedFlow) (SavedFlow, error) {
+	return a.flows.Upsert(f)
+}
+
+// DeleteFlow removes a saved flow by ID.
+func (a *App) DeleteFlow(id string) error {
+	if id == "" {
+		return errors.New("id is required")
+	}
+	return a.flows.Delete(id)
 }
