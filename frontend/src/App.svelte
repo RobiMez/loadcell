@@ -25,6 +25,9 @@
     SaveRun,
     DeleteRun,
     SendSample,
+    ListFlows,
+    SaveFlow,
+    DeleteFlow,
   } from '../wailsjs/go/main/App.js';
   import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime.js';
   import { engine, main } from '../wailsjs/go/models';
@@ -114,6 +117,33 @@
   let tab: 'headers' | 'body' = 'headers';
   let saveHint = '';
   let tokensExpanded = false;
+
+  // Compound flows. SavedFlow is an ordered list of SavedRequest IDs;
+  // activeFlow being non-null switches the loadtest pane into flow mode
+  // (StartTest receives a Steps array instead of single URL/method/etc).
+  type SavedFlowT = {
+    id: string;
+    name: string;
+    stepIds: string[];
+    createdAt: string;
+    updatedAt: string;
+  };
+  let flows: SavedFlowT[] = [];
+  let activeFlow: SavedFlowT | null = null;
+  // Resolved SavedRequest objects for activeFlow.stepIds, in order. Computed
+  // reactively so renames/edits to underlying requests flow through.
+  $: activeFlowSteps = activeFlow
+    ? (activeFlow.stepIds
+        .map((id) => requests.find((r) => r.id === id))
+        .filter((r): r is main.SavedRequest => !!r))
+    : [];
+
+  // Compose modal state. composeEditingId="" means "creating new", otherwise
+  // an edit of an existing flow.
+  let composeOpen = false;
+  let composeEditingId = '';
+  let composeName = '';
+  let composeStepIds: string[] = [];
 
   // Sample-send state — null until the first Send. While `sending` is true
   // the Send button shows a spinner and the existing response (if any) stays
@@ -966,6 +996,8 @@
     } catch (e: any) {
       console.error('Failed to load runs:', e);
     }
+
+    await refreshFlows();
   });
 
   onDestroy(() => {
@@ -1014,6 +1046,7 @@
 
   // ─── Request CRUD ────────────────────────────────────────────────────
   function newRequest() {
+    activeFlow = null;
     currentId = '';
     reqName = '';
     reqMethod = 'GET';
@@ -1043,6 +1076,8 @@
   //  - from Results: jump to Load test (user is picking what to test next).
   //  - from Request or Load test: stay put (user is editing or sequencing).
   function pickRequest(r: main.SavedRequest) {
+    // Leaving flow mode: a single-request selection takes precedence.
+    activeFlow = null;
     loadRequest(r);
     if (view === 'results') view = 'loadtest';
   }
@@ -1097,6 +1132,104 @@
     }
   }
 
+  // ─── Flow operations ─────────────────────────────────────────────
+  async function refreshFlows() {
+    try {
+      const fs = await ListFlows();
+      flows = (fs ?? []) as SavedFlowT[];
+      // If a flow is currently selected and its definition changed on disk,
+      // refresh activeFlow from the list so step changes propagate.
+      if (activeFlow) {
+        const updated = flows.find((f) => f.id === activeFlow!.id);
+        activeFlow = updated || null;
+        if (!activeFlow && view === 'loadtest') view = 'request';
+      }
+    } catch (e: any) {
+      console.error('Failed to load flows:', e);
+    }
+  }
+
+  function selectFlow(f: SavedFlowT) {
+    // Entering flow mode: clear single-request selection so the load-test
+    // pane shows the flow header instead of an unrelated request card.
+    currentId = '';
+    activeFlow = f;
+    activeRunIdx = -1;
+    view = 'loadtest';
+  }
+
+  async function deleteFlowEntry(id: string) {
+    if (!confirm('Delete this saved flow?')) return;
+    try {
+      await DeleteFlow(id);
+      if (activeFlow?.id === id) {
+        activeFlow = null;
+        if (view === 'loadtest') view = 'request';
+      }
+      await refreshFlows();
+    } catch (e: any) {
+      console.error('Delete flow failed:', e);
+    }
+  }
+
+  // ─── Compose modal ───────────────────────────────────────────────
+  function openCompose(f?: SavedFlowT) {
+    composeEditingId = f?.id || '';
+    composeName = f?.name || '';
+    composeStepIds = f ? [...f.stepIds] : [];
+    composeOpen = true;
+  }
+
+  function closeCompose() {
+    composeOpen = false;
+    composeEditingId = '';
+    composeName = '';
+    composeStepIds = [];
+  }
+
+  function composeAddStep(reqId: string) {
+    composeStepIds = [...composeStepIds, reqId];
+  }
+
+  function composeRemoveStep(idx: number) {
+    composeStepIds = composeStepIds.filter((_, i) => i !== idx);
+  }
+
+  function composeMoveStep(idx: number, dir: -1 | 1) {
+    const next = idx + dir;
+    if (next < 0 || next >= composeStepIds.length) return;
+    const copy = [...composeStepIds];
+    [copy[idx], copy[next]] = [copy[next], copy[idx]];
+    composeStepIds = copy;
+  }
+
+  async function saveCompose() {
+    const name = composeName.trim();
+    if (!name) return;
+    if (composeStepIds.length === 0) return;
+    try {
+      const saved = await SaveFlow({
+        id: composeEditingId,
+        name,
+        stepIds: composeStepIds,
+        createdAt: '',
+        updatedAt: '',
+      } as any);
+      await refreshFlows();
+      // Open the (new or just-edited) flow so the user sees the result.
+      const fresh = flows.find((f) => f.id === (saved as any).id);
+      if (fresh) selectFlow(fresh);
+      closeCompose();
+    } catch (e: any) {
+      console.error('Save flow failed:', e);
+    }
+  }
+
+  // composeAvailable: saved requests not yet in the step list. Same
+  // request can appear in the steps list multiple times (e.g. fetch
+  // → update → fetch again), so we don't filter out used IDs.
+  $: composeAvailable = requests;
+
   let flashTimer: any = null;
   function flashSaved(msg: string) {
     saveHint = msg;
@@ -1138,12 +1271,31 @@
     activeRunIdx = -1;
     hoverIdx = -1;
     try {
+      // Flow mode: build a Steps[] from the resolved request list. The
+      // engine ignores url/method/headers/body when Steps is non-empty,
+      // but we leave them as placeholders since createFrom validates
+      // shape rather than meaning.
+      const stepsPayload = activeFlow
+        ? activeFlowSteps.map((r) => ({
+            url: r.url,
+            method: r.method,
+            headers: (r.headers || []).reduce<Record<string, string>>(
+              (acc, h) => {
+                if (h.key) acc[h.key] = h.value;
+                return acc;
+              },
+              {}
+            ),
+            body: r.body || '',
+          }))
+        : [];
       await StartTest(
         engine.Config.createFrom({
-          url: reqUrl,
-          method: reqMethod,
-          headers: buildHeaderMap(),
-          body: reqBody,
+          url: activeFlow ? '' : reqUrl,
+          method: activeFlow ? '' : reqMethod,
+          headers: activeFlow ? {} : buildHeaderMap(),
+          body: activeFlow ? '' : reqBody,
+          steps: stepsPayload,
           mode,
           concurrency,
           rampUpSecs: 0,
@@ -1691,6 +1843,43 @@
           {/if}
         </div>
 
+        <div class="side-section flows-section">
+          <div class="side-head">
+            <span class="side-title">Saved flows</span>
+            <button
+              class="side-new"
+              type="button"
+              on:click={() => openCompose()}
+              disabled={requests.length === 0}
+              title={requests.length === 0 ? 'Save at least one request first' : 'Compose a new flow'}
+            >
+              <Plus size={11} weight="bold" /> New
+            </button>
+          </div>
+          {#if requests.length === 0}
+            <p class="empty">Save some requests first, then compose them into a flow.</p>
+          {:else if flows.length === 0}
+            <p class="empty">No flows yet. <button class="empty-link" type="button" on:click={() => openCompose()}>Compose one</button> from your saved requests.</p>
+          {:else}
+            <ul class="flow-list">
+              {#each flows as f (f.id)}
+                <li class:active={activeFlow?.id === f.id}>
+                  <button class="flow-row" type="button" on:click={() => selectFlow(f)}>
+                    <span class="flow-badge">{f.stepIds.length}</span>
+                    <span class="flow-name">{f.name || 'Untitled'}</span>
+                  </button>
+                  <button class="flow-edit" type="button" on:click|stopPropagation={() => openCompose(f)} title="Edit steps">
+                    <CaretDown size={10} weight="bold" />
+                  </button>
+                  <button class="flow-del" type="button" on:click|stopPropagation={() => deleteFlowEntry(f.id)} title="Delete flow">
+                    <Trash size={14} />
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+
         <div class="side-section runs-section">
           <div class="side-head">
             <span class="side-title">Saved runs</span>
@@ -2125,20 +2314,53 @@
       {/if}
     </section>
     {:else if view === 'loadtest'}
-    <section class="builder loadtest-pane">
-      <div class="lt-request">
-        <span class="lt-request-label">Request</span>
-        <span class="method m-{reqMethod.toLowerCase()}">{reqMethod}</span>
-        <span class="lt-request-name">{reqName || 'Untitled'}</span>
-        <span class="lt-request-url" title={reqUrl}>{reqUrl}</span>
-        <button
-          type="button"
-          class="lt-request-edit"
-          on:click={() => (view = 'request')}
-          disabled={running}
-          title="Edit request"
-        >Edit</button>
-      </div>
+    <section class="builder loadtest-pane" class:flow-mode={!!activeFlow}>
+      {#if activeFlow}
+        <div class="lt-flow">
+          <div class="lt-flow-head">
+            <span class="lt-flow-label">Flow</span>
+            <span class="lt-flow-name">{activeFlow.name}</span>
+            <span class="lt-flow-count">{activeFlow.stepIds.length} step{activeFlow.stepIds.length === 1 ? '' : 's'}</span>
+            <button
+              type="button"
+              class="lt-flow-edit"
+              on:click={() => activeFlow && openCompose(activeFlow)}
+              disabled={running}
+              title="Edit flow"
+            >Edit</button>
+          </div>
+          <ol class="lt-flow-steps">
+            {#each activeFlowSteps as step, i}
+              <li class="lt-flow-step">
+                <span class="lt-flow-step-num">{i + 1}</span>
+                <span class="method m-{step.method.toLowerCase()}">{step.method}</span>
+                <span class="lt-flow-step-name">{step.name || 'Untitled'}</span>
+                <span class="lt-flow-step-url" title={step.url}>{step.url}</span>
+              </li>
+            {/each}
+            {#if activeFlowSteps.length < activeFlow.stepIds.length}
+              <li class="lt-flow-step missing">
+                <span class="lt-flow-step-num">!</span>
+                <span class="lt-flow-step-name">{activeFlow.stepIds.length - activeFlowSteps.length} step(s) reference deleted requests — edit the flow to fix</span>
+              </li>
+            {/if}
+          </ol>
+        </div>
+      {:else}
+        <div class="lt-request">
+          <span class="lt-request-label">Request</span>
+          <span class="method m-{reqMethod.toLowerCase()}">{reqMethod}</span>
+          <span class="lt-request-name">{reqName || 'Untitled'}</span>
+          <span class="lt-request-url" title={reqUrl}>{reqUrl}</span>
+          <button
+            type="button"
+            class="lt-request-edit"
+            on:click={() => (view = 'request')}
+            disabled={running}
+            title="Edit request"
+          >Edit</button>
+        </div>
+      {/if}
       <div class="profile">
         <div class="profile-head">
           <h3 class="profile-title">Load profile</h3>
@@ -2643,6 +2865,93 @@
       </div>
     </div>
   {/if}
+
+  {#if composeOpen}
+    <div class="modal-backdrop" on:click|self={closeCompose} role="presentation">
+      <div class="modal compose-modal" role="dialog" aria-modal="true" aria-label="Compose flow">
+        <div class="modal-head">
+          <h3 class="modal-title">{composeEditingId ? 'Edit flow' : 'New flow'}</h3>
+          <button class="modal-close" type="button" on:click={closeCompose} title="Close">
+            <X size={14} weight="bold" />
+          </button>
+        </div>
+        <div class="modal-body">
+          <label class="compose-name">
+            <span class="k">Name</span>
+            <input
+              type="text"
+              bind:value={composeName}
+              placeholder="e.g. checkout-journey"
+              spellcheck="false"
+            />
+          </label>
+          <div class="compose-panes">
+            <div class="compose-pane">
+              <div class="compose-pane-head">
+                <span class="compose-pane-title">Saved requests</span>
+                <span class="compose-pane-hint">click to add →</span>
+              </div>
+              {#if composeAvailable.length === 0}
+                <p class="compose-empty">No saved requests yet.</p>
+              {:else}
+                <ul class="compose-avail">
+                  {#each composeAvailable as r (r.id)}
+                    <li>
+                      <button class="compose-avail-row" type="button" on:click={() => composeAddStep(r.id)}>
+                        <span class="method m-{r.method.toLowerCase()}">{r.method}</span>
+                        <span class="compose-avail-name">{r.name || 'Untitled'}</span>
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </div>
+            <div class="compose-pane">
+              <div class="compose-pane-head">
+                <span class="compose-pane-title">Steps in order</span>
+                <span class="compose-pane-hint">{composeStepIds.length} step{composeStepIds.length === 1 ? '' : 's'}</span>
+              </div>
+              {#if composeStepIds.length === 0}
+                <p class="compose-empty">Pick requests on the left to build a flow.</p>
+              {:else}
+                <ol class="compose-steps">
+                  {#each composeStepIds as sid, i (i + ':' + sid)}
+                    {@const r = requests.find((x) => x.id === sid)}
+                    <li>
+                      <span class="compose-step-num">{i + 1}</span>
+                      {#if r}
+                        <span class="method m-{r.method.toLowerCase()}">{r.method}</span>
+                        <span class="compose-step-name">{r.name || 'Untitled'}</span>
+                      {:else}
+                        <span class="method m-deleted">DEL</span>
+                        <span class="compose-step-name compose-step-missing">deleted request</span>
+                      {/if}
+                      <div class="compose-step-actions">
+                        <button type="button" on:click={() => composeMoveStep(i, -1)} disabled={i === 0} title="Move up" aria-label="Move up">↑</button>
+                        <button type="button" on:click={() => composeMoveStep(i, 1)} disabled={i === composeStepIds.length - 1} title="Move down" aria-label="Move down">↓</button>
+                        <button type="button" on:click={() => composeRemoveStep(i)} title="Remove" aria-label="Remove">
+                          <X size={11} weight="bold" />
+                        </button>
+                      </div>
+                    </li>
+                  {/each}
+                </ol>
+              {/if}
+            </div>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-ghost" type="button" on:click={closeCompose}>Cancel</button>
+          <button
+            class="btn btn-primary"
+            type="button"
+            on:click={saveCompose}
+            disabled={!composeName.trim() || composeStepIds.length === 0}
+          >Save flow</button>
+        </div>
+      </div>
+    </div>
+  {/if}
 </main>
 
 <style>
@@ -2917,6 +3226,101 @@
     background: rgba(120, 50, 50, 0.10);
   }
 
+  /* ─── Saved-flow list (sidebar) ──────────────────────────────────── */
+  .flow-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .flow-list li {
+    display: flex;
+    align-items: stretch;
+    border-radius: 4px;
+    background: transparent;
+    transition: background 120ms;
+  }
+  .flow-list li.active {
+    background: var(--sage-tint);
+  }
+  .flow-list li:hover:not(.active) {
+    background: rgba(72, 89, 65, 0.05);
+  }
+  .flow-row {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: transparent;
+    border: none;
+    color: inherit;
+    padding: 8px 10px;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    min-width: 0;
+  }
+  .flow-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent-strong);
+  }
+  .flow-list li.active .flow-badge {
+    background: rgba(255, 255, 255, 0.85);
+    border-color: rgba(72, 89, 65, 0.3);
+  }
+  .flow-name {
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text);
+  }
+  .flow-edit,
+  .flow-del {
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    opacity: 0.4;
+    padding: 0 8px;
+    cursor: pointer;
+    transition: all 120ms;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .flow-edit:hover {
+    color: var(--accent-strong);
+    opacity: 1;
+    background: rgba(72, 89, 65, 0.08);
+  }
+  .flow-del:hover {
+    color: var(--err);
+    opacity: 1;
+    background: rgba(120, 50, 50, 0.10);
+  }
+  .empty-link {
+    appearance: none;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--accent-strong);
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
   /* ─── Saved-run cards (sidebar) ─────────────────────────────────── */
   .run-list {
     list-style: none;
@@ -3142,6 +3546,360 @@
     opacity: 0.4;
     cursor: not-allowed;
   }
+
+  /* ─── Flow run header (load-test pane, flow mode) ───────────────── */
+  .lt-flow {
+    background: var(--sage-tint);
+    border: 1px solid rgba(72, 89, 65, 0.18);
+    border-radius: 6px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .lt-flow-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .lt-flow-label {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 10.5px;
+    color: var(--accent-strong);
+    font-weight: 600;
+  }
+  .lt-flow-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .lt-flow-count {
+    margin-left: 0;
+    padding: 1px 8px;
+    background: rgba(72, 89, 65, 0.12);
+    border-radius: 999px;
+    font-size: 11px;
+    color: var(--accent-strong);
+    font-weight: 500;
+  }
+  .lt-flow-edit {
+    margin-left: auto;
+    appearance: none;
+    background: transparent;
+    border: 1px solid rgba(72, 89, 65, 0.25);
+    border-radius: 4px;
+    color: var(--accent-strong);
+    padding: 4px 12px;
+    font: inherit;
+    font-size: 11.5px;
+    cursor: pointer;
+    transition: background 120ms;
+  }
+  .lt-flow-edit:hover:not(:disabled) {
+    background: rgba(72, 89, 65, 0.10);
+  }
+  .lt-flow-edit:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .lt-flow-steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .lt-flow-step {
+    display: grid;
+    grid-template-columns: 28px auto 1fr auto;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    background: rgba(255, 255, 255, 0.6);
+    border: 1px solid rgba(72, 89, 65, 0.10);
+    border-radius: 4px;
+  }
+  .lt-flow-step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent-strong);
+  }
+  .lt-flow-step.missing .lt-flow-step-num {
+    background: rgba(120, 50, 50, 0.12);
+    border-color: rgba(120, 50, 50, 0.3);
+    color: var(--err);
+  }
+  .lt-flow-step-name {
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .lt-flow-step.missing .lt-flow-step-name {
+    color: var(--err);
+    font-style: italic;
+  }
+  .lt-flow-step-url {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11.5px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  /* ─── Compose modal ──────────────────────────────────────────────── */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(20, 30, 25, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    backdrop-filter: blur(2px);
+  }
+  .modal {
+    background: var(--bg, #fff);
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    box-shadow: 0 20px 50px rgba(20, 30, 25, 0.2);
+    width: min(880px, 92vw);
+    max-height: 86vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--line);
+  }
+  .modal-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .modal-close {
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    padding: 4px;
+    cursor: pointer;
+    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-close:hover {
+    color: var(--text);
+    background: rgba(72, 89, 65, 0.08);
+  }
+  .modal-body {
+    padding: 18px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .modal-foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 18px;
+    border-top: 1px solid var(--line);
+  }
+  .compose-name {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .compose-name .k {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .compose-name input {
+    height: 34px;
+    padding: 0 10px;
+    background: var(--inset);
+    color: var(--text);
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    font: inherit;
+    font-size: 13px;
+  }
+  .compose-name input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(159, 184, 173, 0.15);
+  }
+  .compose-panes {
+    display: grid;
+    grid-template-columns: 1fr 1.1fr;
+    gap: 12px;
+    min-height: 320px;
+  }
+  .compose-pane {
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .compose-pane-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .compose-pane-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  .compose-pane-hint {
+    font-size: 11px;
+    color: var(--muted);
+    opacity: 0.7;
+  }
+  .compose-empty {
+    margin: 0;
+    padding: 16px 12px;
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+  }
+  .compose-avail {
+    list-style: none;
+    margin: 0;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .compose-avail-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 10px;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+    transition: background 120ms;
+  }
+  .compose-avail-row:hover {
+    background: rgba(72, 89, 65, 0.10);
+  }
+  .compose-avail-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .compose-steps {
+    list-style: none;
+    margin: 0;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .compose-steps li {
+    display: grid;
+    grid-template-columns: 22px auto 1fr auto;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+  }
+  .compose-step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--accent-strong);
+  }
+  .compose-step-name {
+    font-size: 12.5px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .compose-step-missing {
+    color: var(--err);
+    font-style: italic;
+  }
+  .compose-step-actions {
+    display: flex;
+    gap: 2px;
+  }
+  .compose-step-actions button {
+    appearance: none;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--muted);
+    width: 22px;
+    height: 22px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .compose-step-actions button:hover:not(:disabled) {
+    background: rgba(72, 89, 65, 0.10);
+    border-color: rgba(72, 89, 65, 0.18);
+    color: var(--text);
+  }
+  .compose-step-actions button:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+  .compose-step-actions button:last-child:hover:not(:disabled) {
+    background: rgba(120, 50, 50, 0.10);
+    border-color: rgba(120, 50, 50, 0.20);
+    color: var(--err);
+  }
+
   .results-pane {
     display: flex;
     flex-direction: column;
