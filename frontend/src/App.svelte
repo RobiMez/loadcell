@@ -113,6 +113,7 @@
   let reqBody = '';
   let tab: 'headers' | 'body' = 'headers';
   let saveHint = '';
+  let tokensExpanded = false;
 
   // Sample-send state — null until the first Send. While `sending` is true
   // the Send button shows a spinner and the existing response (if any) stays
@@ -204,20 +205,67 @@
     );
   }
 
+  // HTML-escape — used before wrapping anything as highlight markup so a
+  // pasted "<script>" in the URL/body can't inject DOM.
+  function escapeHtml(s: string): string {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // Token recognizer. Mirrors the Go parser (tmpl/tmpl.go) — anything not
+  // matched here is treated as literal text, so a typo like "{randInt:1:5}"
+  // simply doesn't get highlighted, signaling to the user that it won't
+  // render as a token. Whitespace inside the braces is tolerated to match
+  // Go-side trimming.
+  const TOKEN_RE = /\{\{\s*(uuid|seq|nowMs|randInt:\s*-?\d+\s*:\s*-?\d+)\s*\}\}/g;
+
+  function highlightTokens(htmlOrText: string): string {
+    return htmlOrText.replace(TOKEN_RE, (match, inner: string) => {
+      if (inner.startsWith('randInt:')) {
+        const nums = inner
+          .slice('randInt:'.length)
+          .split(':')
+          .map((p) => parseInt(p.trim(), 10));
+        // Reject inverted ranges (min > max) — the Go parser also rejects
+        // these, so the highlight stays honest about what will render.
+        if (nums.length !== 2 || nums.some(Number.isNaN) || nums[0] > nums[1]) {
+          return match;
+        }
+      }
+      return `<span class="lt-tok">${match}</span>`;
+    });
+  }
+
   // Request body highlighting — overlay strategy: a styled <pre> sits behind
   // a transparent-text <textarea>. Both share font/padding/wrap so glyph
   // positions line up; scroll is mirrored on every input/scroll event.
   let bodyOverlayEl: HTMLPreElement | null = null;
   let bodyTextareaEl: HTMLTextAreaElement | null = null;
 
+  // URL overlay — same idea applied to a single-line <input>. Horizontal
+  // scroll on the input gets mirrored to the overlay so tokens stay aligned.
+  let urlOverlayEl: HTMLDivElement | null = null;
+  let urlInputEl: HTMLInputElement | null = null;
+
+  // Header value overlays — one per header row. Refs and highlight HTML are
+  // parallel to reqHeaders by index. Adding/removing rows reshapes the
+  // arrays via the reactive .map below.
+  let hValueOverlayEls: (HTMLDivElement | null)[] = [];
+  let hValueInputEls: (HTMLInputElement | null)[] = [];
+
   $: reqBodyIsJson = (() => {
     const t = reqBody.trimStart();
     return t.startsWith('{') || t.startsWith('[');
   })();
-  // Highlight any JSON-shaped body — the regex tokenizer is lenient enough
-  // to color partial input as the user types, so highlighting doesn't pop
-  // in and out between every keystroke.
-  $: reqBodyHighlight = reqBodyIsJson && reqBody ? highlightJson(reqBody) : '';
+  // Layer order: HTML-escape → JSON highlight (if JSON-shaped) → token
+  // highlight. The token regex matches {{...}} sequences that survive both
+  // earlier steps untouched, so they compose without re-escaping.
+  $: reqBodyHighlight = reqBody
+    ? highlightTokens(reqBodyIsJson ? highlightJson(reqBody) : escapeHtml(reqBody))
+    : '';
+  $: reqUrlHighlight = reqUrl ? highlightTokens(escapeHtml(reqUrl)) : '';
+  $: hValueHighlights = reqHeaders.map((h) =>
+    h.value ? highlightTokens(escapeHtml(h.value)) : ''
+  );
 
   // Keep overlay scroll in lockstep with the textarea so highlighted spans
   // stay aligned with what the user is typing.
@@ -231,6 +279,31 @@
     void reqBody;
     requestAnimationFrame(syncBodyOverlayScroll);
   }
+
+  // Single-line URL input scrolls horizontally as it overflows; mirror that
+  // to the overlay so the highlighted spans track the caret.
+  function syncUrlOverlayScroll() {
+    if (!urlOverlayEl || !urlInputEl) return;
+    urlOverlayEl.scrollLeft = urlInputEl.scrollLeft;
+  }
+  $: if (urlOverlayEl && urlInputEl) {
+    void reqUrl;
+    requestAnimationFrame(syncUrlOverlayScroll);
+  }
+
+  // Per-row header-value overlay sync. Index-keyed because the row count
+  // changes when the user adds/removes headers.
+  function syncHeaderOverlay(i: number) {
+    const o = hValueOverlayEls[i];
+    const inp = hValueInputEls[i];
+    if (!o || !inp) return;
+    o.scrollLeft = inp.scrollLeft;
+  }
+  $: hValueHighlights.forEach((_, i) => {
+    if (hValueOverlayEls[i] && hValueInputEls[i]) {
+      requestAnimationFrame(() => syncHeaderOverlay(i));
+    }
+  });
 
   function formatRequestBody() {
     try {
@@ -1758,15 +1831,81 @@
             </div>
           {/if}
         </div>
-        <input
-          class="url-input"
-          type="text"
-          bind:value={reqUrl}
-          placeholder="https://..."
-          spellcheck="false"
-          disabled={running}
-        />
+        <div class="url-input-wrap" class:highlighted={!!reqUrlHighlight}>
+          {#if reqUrlHighlight}
+            <div
+              class="url-input-overlay"
+              bind:this={urlOverlayEl}
+              aria-hidden="true"
+            >{@html reqUrlHighlight}</div>
+          {/if}
+          <input
+            class="url-input"
+            type="text"
+            bind:value={reqUrl}
+            bind:this={urlInputEl}
+            on:scroll={syncUrlOverlayScroll}
+            on:input={syncUrlOverlayScroll}
+            placeholder="https://..."
+            spellcheck="false"
+            disabled={running}
+          />
+        </div>
       </div>
+
+      <div class="tokens-hint">
+        <span class="tokens-hint-label">Dynamic tokens</span>
+        <code title="Random UUID v4 — each occurrence rolls independently">{'{{uuid}}'}</code>
+        <code title="Counter that grows 1, 2, 3 per request — shared across occurrences in one render">{'{{seq}}'}</code>
+        <code title="Current Unix time in milliseconds — snapshotted once per request">{'{{nowMs}}'}</code>
+        <code title="Random integer in [min, max] inclusive — each occurrence rolls independently">{'{{randInt:1:1000}}'}</code>
+        <button
+          type="button"
+          class="tokens-toggle"
+          class:open={tokensExpanded}
+          on:click={() => (tokensExpanded = !tokensExpanded)}
+          aria-expanded={tokensExpanded}
+        >
+          {tokensExpanded ? 'Hide' : 'How to use'}
+          <CaretDown size={10} weight="bold" />
+        </button>
+      </div>
+
+      {#if tokensExpanded}
+        <div class="tokens-help">
+          <p class="tokens-help-intro">
+            Drop these anywhere in the URL, header values, or body. Each request renders them to fresh values — useful for defeating caches and tagging requests for tracing.
+          </p>
+          <dl class="tokens-help-list">
+            <dt><code>{'{{uuid}}'}</code></dt>
+            <dd>
+              Random UUID v4. Each occurrence in one template renders an independent value.
+              <span class="tokens-help-ex">→ <code>b693b66f-950a-40dc-b913-60486727cb37</code></span>
+            </dd>
+
+            <dt><code>{'{{seq}}'}</code></dt>
+            <dd>
+              Counter that grows <code>1, 2, 3, …</code> per request. Multiple <code>{'{{seq}}'}</code> in the same render all return the same number, so URL/body/header stay consistent for the same request.
+              <span class="tokens-help-ex">→ <code>1</code>, <code>2</code>, <code>3</code>, …</span>
+            </dd>
+
+            <dt><code>{'{{nowMs}}'}</code></dt>
+            <dd>
+              Current Unix time in milliseconds. Snapshotted once per request so all occurrences share the same instant.
+              <span class="tokens-help-ex">→ <code>1780623659570</code></span>
+            </dd>
+
+            <dt><code>{'{{randInt:min:max}}'}</code></dt>
+            <dd>
+              Random integer in <code>[min, max]</code> (both inclusive). Each occurrence rolls independently. Min must be ≤ max.
+              <span class="tokens-help-ex">→ <code>{'{{randInt:1:1000}}'}</code> renders as <code>441</code></span>
+            </dd>
+          </dl>
+          <p class="tokens-help-foot">
+            Unknown tokens (typos like <code>{'{{uid}}'}</code>) fail with an inline error instead of silently sending the literal text.
+          </p>
+        </div>
+      {/if}
 
       <div class="tabs">
         <button
@@ -1801,13 +1940,25 @@
                   spellcheck="false"
                   disabled={running}
                 />
-                <input
-                  type="text"
-                  placeholder="Value"
-                  bind:value={h.value}
-                  spellcheck="false"
-                  disabled={running}
-                />
+                <div class="h-value-wrap" class:highlighted={!!hValueHighlights[i]}>
+                  {#if hValueHighlights[i]}
+                    <div
+                      class="h-value-overlay"
+                      bind:this={hValueOverlayEls[i]}
+                      aria-hidden="true"
+                    >{@html hValueHighlights[i]}</div>
+                  {/if}
+                  <input
+                    type="text"
+                    placeholder="Value"
+                    bind:value={h.value}
+                    bind:this={hValueInputEls[i]}
+                    on:scroll={() => syncHeaderOverlay(i)}
+                    on:input={() => syncHeaderOverlay(i)}
+                    spellcheck="false"
+                    disabled={running}
+                  />
+                </div>
                 <button class="hdel" type="button" on:click={() => removeHeader(i)} disabled={running} title="Remove">
                   <X size={12} weight="bold" />
                 </button>
@@ -3174,23 +3325,185 @@
     background: var(--sage-tint);
     color: var(--accent);
   }
-  .url-input {
+  /* URL input + overlay: single-line variant of the body's overlay
+     pattern. .url-input-wrap holds both; .url-input-overlay sits behind
+     a transparent-text <input> so spans line up under the caret. */
+  .url-input-wrap {
+    position: relative;
     flex: 1;
+    display: flex;
+  }
+  .url-input,
+  .url-input-overlay {
+    width: 100%;
     height: 38px;
     padding: 0 12px;
-    background: var(--inset);
-    color: var(--text);
     border: 1px solid var(--line-strong);
     border-radius: 4px;
     font: inherit;
     font-size: 13px;
     font-family: "Lexend", ui-monospace, "SF Mono", Menlo, monospace;
     font-weight: 400;
+    line-height: 36px; /* 38 - 2*border */
+    box-sizing: border-box;
+  }
+  .url-input {
+    background: var(--inset);
+    color: var(--text);
   }
   .url-input:focus {
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(159, 184, 173, 0.15);
+  }
+  .url-input-overlay {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    background: var(--inset);
+    color: var(--text);
+    border-color: var(--line-strong);
+    white-space: pre;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .url-input-wrap.highlighted .url-input {
+    background: transparent;
+    color: transparent;
+    caret-color: var(--text);
+    position: relative;
+    z-index: 1;
+  }
+  .url-input-wrap.highlighted .url-input-overlay {
+    /* Hide the overlay's own border so the underlying input's border
+       (including its focus ring) is the single source of truth. Keep
+       the overlay's --inset background so the input area looks the
+       same as the non-highlighted state. */
+    border-color: transparent;
+  }
+
+  /* Recognized template token — used by both URL and body overlays. Must
+     stay metric-neutral or the overlay's glyphs drift right of the input's
+     glyphs (selection/caret misalign with what the user sees). Safe props:
+     background, color, border-radius (no width change), text-decoration,
+     box-shadow. UNSAFE: padding, border-width, font-weight (bold widens
+     glyphs in proportional fonts), font-size, letter-spacing, font-style. */
+  :global(.lt-tok) {
+    background: rgba(159, 184, 173, 0.38);
+    color: var(--accent-strong);
+    border-radius: 2px;
+    box-shadow: inset 0 -1px 0 rgba(72, 89, 65, 0.35);
+  }
+  .tokens-hint {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .tokens-hint-label {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 10px;
+    opacity: 0.75;
+  }
+  .tokens-hint code {
+    padding: 1px 6px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    color: var(--text);
+    cursor: help;
+  }
+  .tokens-toggle {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    font: inherit;
+    font-size: 11px;
+    color: var(--muted);
+    cursor: pointer;
+    transition: background 120ms, border-color 120ms, color 120ms;
+  }
+  .tokens-toggle :global(svg) {
+    transition: transform 160ms;
+  }
+  .tokens-toggle.open :global(svg) {
+    transform: rotate(180deg);
+  }
+  .tokens-toggle:hover {
+    background: var(--inset);
+    border-color: var(--line);
+    color: var(--text);
+  }
+
+  .tokens-help {
+    margin-top: 8px;
+    padding: 12px 14px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .tokens-help-intro,
+  .tokens-help-foot {
+    margin: 0;
+    color: var(--muted);
+  }
+  .tokens-help-foot {
+    margin-top: 10px;
+    font-size: 11px;
+  }
+  .tokens-help-list {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    column-gap: 16px;
+    row-gap: 10px;
+    margin: 12px 0 0 0;
+    align-items: start;
+  }
+  .tokens-help-list dt {
+    margin: 0;
+    padding-top: 1px;
+  }
+  .tokens-help-list dt code {
+    display: inline-block;
+    padding: 2px 6px;
+    background: var(--bg, #fff);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11.5px;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  .tokens-help-list dd {
+    margin: 0;
+    color: var(--text);
+  }
+  .tokens-help-list dd code {
+    padding: 0 4px;
+    background: rgba(0, 0, 0, 0.04);
+    border-radius: 2px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11.5px;
+  }
+  .tokens-help-ex {
+    display: block;
+    margin-top: 3px;
+    color: var(--muted);
+    font-size: 11px;
   }
   input:disabled, select:disabled, textarea:disabled {
     opacity: 0.55;
@@ -3272,6 +3585,46 @@
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 2px rgba(159, 184, 173, 0.15);
+  }
+  /* Header-value overlay: same metric-neutral pattern as the URL input.
+     The wrap fills the grid column; the overlay shares font/padding so
+     glyph positions line up with the underlying input. */
+  .h-value-wrap {
+    position: relative;
+    display: flex;
+  }
+  .h-value-wrap > input,
+  .h-value-overlay {
+    width: 100%;
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font: inherit;
+    font-size: 12px;
+    font-family: "Lexend", ui-monospace, monospace;
+    line-height: 30px;
+    box-sizing: border-box;
+  }
+  .h-value-overlay {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    background: var(--inset);
+    color: var(--text);
+    white-space: pre;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .h-value-wrap.highlighted > input {
+    background: transparent;
+    color: transparent;
+    caret-color: var(--text);
+    position: relative;
+    z-index: 1;
+  }
+  .h-value-wrap.highlighted .h-value-overlay {
+    border-color: transparent;
   }
   .hdel {
     appearance: none;

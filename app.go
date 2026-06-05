@@ -15,6 +15,7 @@ type App struct {
 	engine   *engine.Engine
 	requests *requestStore
 	runs     *runStore
+	sample   *sampleCache
 }
 
 // NewApp creates a new App application struct.
@@ -23,6 +24,7 @@ func NewApp() *App {
 		engine:   engine.New(),
 		requests: newRequestStore(),
 		runs:     newRunStore(),
+		sample:   newSampleCache(),
 	}
 }
 

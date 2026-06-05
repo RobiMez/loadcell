@@ -20,6 +20,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"math/rand"
@@ -29,6 +30,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"loadcell/tmpl"
 )
 
 // Load profile names. Empty string is treated as ModeConstant.
@@ -86,11 +89,22 @@ type Config struct {
 // requestSpec is the per-request template each worker reuses, derived from
 // Config. Keeping it small means the worker doesn't carry the load-profile
 // fields around.
+//
+// urlTmpl / bodyTmpl / headers carry pre-parsed templates so workers don't
+// re-parse the same string per request; placeholders like {{uuid}} render
+// fresh on every call so each request can be unique (cache-miss testing).
 type requestSpec struct {
-	url     string
-	method  string
-	headers map[string]string
-	body    string
+	urlTmpl  *tmpl.Template
+	method   string
+	headers  []headerSpec
+	bodyTmpl *tmpl.Template
+}
+
+// headerSpec keeps a parallel key + value-template list. Header keys are
+// kept static; only values are templated.
+type headerSpec struct {
+	key string
+	val *tmpl.Template
 }
 
 // Metrics is one live snapshot of the running test, emitted periodically and
@@ -232,6 +246,30 @@ func (e *Engine) Start(cfg Config) error {
 		}
 	}
 
+	method := cfg.Method
+	if method == "" {
+		method = http.MethodGet
+	}
+	urlTmpl, err := tmpl.Parse(cfg.URL)
+	if err != nil {
+		return fmt.Errorf("url: %w", err)
+	}
+	bodyTmpl, err := tmpl.Parse(cfg.Body)
+	if err != nil {
+		return fmt.Errorf("body: %w", err)
+	}
+	var headers []headerSpec
+	if len(cfg.Headers) > 0 {
+		headers = make([]headerSpec, 0, len(cfg.Headers))
+		for k, v := range cfg.Headers {
+			vt, err := tmpl.Parse(v)
+			if err != nil {
+				return fmt.Errorf("header %q: %w", k, err)
+			}
+			headers = append(headers, headerSpec{key: k, val: vt})
+		}
+	}
+
 	e.mu.Lock()
 	if e.running {
 		e.mu.Unlock()
@@ -274,15 +312,11 @@ func (e *Engine) Start(cfg Config) error {
 	results := make(chan result, 4096)
 	startTime := time.Now()
 
-	method := cfg.Method
-	if method == "" {
-		method = http.MethodGet
-	}
 	spec := requestSpec{
-		url:     cfg.URL,
-		method:  method,
-		headers: cfg.Headers,
-		body:    cfg.Body,
+		urlTmpl:  urlTmpl,
+		method:   method,
+		headers:  headers,
+		bodyTmpl: bodyTmpl,
 	}
 
 	var wg sync.WaitGroup
@@ -415,14 +449,19 @@ func doRequest(ctx context.Context, client *http.Client, spec requestSpec, out c
 	if ctx.Err() != nil {
 		return false
 	}
+	// Render templates fresh on every request so {{uuid}}, {{seq}}, etc.
+	// produce a new value per call. For static templates Render returns
+	// the original literal string with no copy.
+	renderedURL := spec.urlTmpl.Render()
+	renderedBody := spec.bodyTmpl.Render()
 	var body io.Reader
-	if spec.body != "" {
+	if renderedBody != "" {
 		// Fresh reader per request — strings.NewReader is cheap to allocate
 		// and avoids consuming a shared reader across iterations.
-		body = strings.NewReader(spec.body)
+		body = strings.NewReader(renderedBody)
 	}
 	start := time.Now()
-	req, err := http.NewRequestWithContext(ctx, spec.method, spec.url, body)
+	req, err := http.NewRequestWithContext(ctx, spec.method, renderedURL, body)
 	if err != nil {
 		// Malformed URL/method won't fix itself — emit one error and exit so we
 		// don't spin a CPU.
@@ -432,8 +471,8 @@ func doRequest(ctx context.Context, client *http.Client, spec requestSpec, out c
 		}
 		return false
 	}
-	for k, v := range spec.headers {
-		req.Header.Set(k, v)
+	for _, h := range spec.headers {
+		req.Header.Set(h.key, h.val.Render())
 	}
 	resp, err := client.Do(req)
 	latencyMs := float64(time.Since(start).Microseconds()) / 1000.0
