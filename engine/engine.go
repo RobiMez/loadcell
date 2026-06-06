@@ -20,6 +20,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"math/rand"
@@ -29,6 +30,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"loadcell/tmpl"
 )
 
 // Load profile names. Empty string is treated as ModeConstant.
@@ -56,7 +59,22 @@ type CurvePoint struct {
 	Exponent float64 `json:"exponent"` // for exponential; defaults to 2.0
 }
 
+// StepConfig is one HTTP request within a compound flow.
+// Empty Method defaults to GET. Templated values render fresh per call.
+type StepConfig struct {
+	URL     string            `json:"url"`
+	Method  string            `json:"method"`
+	Headers map[string]string `json:"headers"`
+	Body    string            `json:"body"`
+}
+
 // Config is the test definition supplied by the caller.
+//
+// Request shape:
+//   - Steps non-empty: compound flow. Each worker fires step 0, 1, …, N-1
+//     and loops back to step 0. The single-request URL/Method/Headers/Body
+//     fields are ignored.
+//   - Steps empty: legacy single-request mode, using URL/Method/Headers/Body.
 //
 // Load profiles:
 //   - Mode == "constant": Concurrency workers fire for DurationSecs.
@@ -71,6 +89,11 @@ type Config struct {
 	Headers map[string]string `json:"headers"` // applied via Header.Set on each request
 	Body    string            `json:"body"`    // raw body, repeated verbatim per request
 
+	// Steps replaces URL/Method/Headers/Body when non-empty. Each worker
+	// walks the slice in order, then wraps back to index 0. Per-step
+	// templates have independent {{seq}} counters.
+	Steps []StepConfig `json:"steps,omitempty"`
+
 	Mode        string `json:"mode"`
 	Concurrency int    `json:"concurrency"` // target (peak) worker count for constant/ramp
 	// RampUpSecs is how long it takes to reach Concurrency in ramp mode.
@@ -83,14 +106,24 @@ type Config struct {
 	Noise float64      `json:"noise"` // 0..1; jitter applied to desired worker count each tick
 }
 
-// requestSpec is the per-request template each worker reuses, derived from
-// Config. Keeping it small means the worker doesn't carry the load-profile
-// fields around.
-type requestSpec struct {
-	url     string
-	method  string
-	headers map[string]string
-	body    string
+// stepSpec is one parsed step in a flow (or the single step of a non-flow
+// run). Templates are pre-parsed in Start so workers don't re-parse per
+// request; placeholders like {{uuid}} render fresh on every call so each
+// request can be unique (cache-miss testing). Each step holds an
+// independent {{seq}} counter — step-to-step value sharing is out of
+// scope for the MVP (would need a variable system).
+type stepSpec struct {
+	urlTmpl  *tmpl.Template
+	method   string
+	headers  []headerSpec
+	bodyTmpl *tmpl.Template
+}
+
+// headerSpec keeps a parallel key + value-template list. Header keys are
+// kept static; only values are templated.
+type headerSpec struct {
+	key string
+	val *tmpl.Template
 }
 
 // Metrics is one live snapshot of the running test, emitted periodically and
@@ -147,6 +180,10 @@ func classify(resp *http.Response, err error) statusBucket {
 type result struct {
 	latencyMs float64
 	bucket    statusBucket
+	// stepIdx records which step of a flow produced this result. Always 0
+	// in single-request mode. Currently the aggregator ignores it, but
+	// storing it now keeps per-step metrics cheap to add later.
+	stepIdx int
 }
 
 // Engine drives a single load test at a time.
@@ -180,7 +217,13 @@ func (e *Engine) IsRunning() bool {
 // Start validates cfg and kicks off a test in the background. It returns
 // immediately. Returns an error if cfg is invalid or a test is already running.
 func (e *Engine) Start(cfg Config) error {
-	if cfg.URL == "" {
+	if len(cfg.Steps) > 0 {
+		for i, s := range cfg.Steps {
+			if s.URL == "" {
+				return fmt.Errorf("step %d: url is required", i+1)
+			}
+		}
+	} else if cfg.URL == "" {
 		return errors.New("url is required")
 	}
 	if cfg.Concurrency < 1 {
@@ -232,6 +275,27 @@ func (e *Engine) Start(cfg Config) error {
 		}
 	}
 
+	// Build the step list. Legacy single-request mode is treated as a
+	// one-step flow so the worker loop downstream is the same shape for
+	// both cases.
+	rawSteps := cfg.Steps
+	if len(rawSteps) == 0 {
+		rawSteps = []StepConfig{{
+			URL: cfg.URL, Method: cfg.Method, Headers: cfg.Headers, Body: cfg.Body,
+		}}
+	}
+	steps := make([]stepSpec, 0, len(rawSteps))
+	for i, s := range rawSteps {
+		sp, err := buildStepSpec(s)
+		if err != nil {
+			if len(cfg.Steps) > 0 {
+				return fmt.Errorf("step %d: %w", i+1, err)
+			}
+			return err
+		}
+		steps = append(steps, sp)
+	}
+
 	e.mu.Lock()
 	if e.running {
 		e.mu.Unlock()
@@ -274,17 +338,6 @@ func (e *Engine) Start(cfg Config) error {
 	results := make(chan result, 4096)
 	startTime := time.Now()
 
-	method := cfg.Method
-	if method == "" {
-		method = http.MethodGet
-	}
-	spec := requestSpec{
-		url:     cfg.URL,
-		method:  method,
-		headers: cfg.Headers,
-		body:    cfg.Body,
-	}
-
 	var wg sync.WaitGroup
 	var currentConcurrency atomic.Int64
 
@@ -294,7 +347,7 @@ func (e *Engine) Start(cfg Config) error {
 			currentConcurrency.Add(1)
 			defer currentConcurrency.Add(-1)
 			defer wg.Done()
-			runWorker(ctx, client, spec, results)
+			runWorker(ctx, client, steps, results)
 		}()
 	}
 
@@ -309,7 +362,7 @@ func (e *Engine) Start(cfg Config) error {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				runCurveWorker(ctx, slot, &desired, client, spec, results, &currentConcurrency)
+				runCurveWorker(ctx, slot, &desired, client, steps, results, &currentConcurrency)
 			}()
 		}
 
@@ -404,36 +457,80 @@ func (e *Engine) Stop() {
 	}
 }
 
-func runWorker(ctx context.Context, client *http.Client, spec requestSpec, out chan<- result) {
-	for doRequest(ctx, client, spec, out) {
+// buildStepSpec pre-parses one step's templates so the worker hot path
+// never re-parses. Defaults Method to GET when empty.
+func buildStepSpec(s StepConfig) (stepSpec, error) {
+	method := s.Method
+	if method == "" {
+		method = http.MethodGet
+	}
+	urlTmpl, err := tmpl.Parse(s.URL)
+	if err != nil {
+		return stepSpec{}, fmt.Errorf("url: %w", err)
+	}
+	bodyTmpl, err := tmpl.Parse(s.Body)
+	if err != nil {
+		return stepSpec{}, fmt.Errorf("body: %w", err)
+	}
+	var hdrs []headerSpec
+	if len(s.Headers) > 0 {
+		hdrs = make([]headerSpec, 0, len(s.Headers))
+		for k, v := range s.Headers {
+			vt, err := tmpl.Parse(v)
+			if err != nil {
+				return stepSpec{}, fmt.Errorf("header %q: %w", k, err)
+			}
+			hdrs = append(hdrs, headerSpec{key: k, val: vt})
+		}
+	}
+	return stepSpec{
+		urlTmpl:  urlTmpl,
+		method:   method,
+		headers:  hdrs,
+		bodyTmpl: bodyTmpl,
+	}, nil
+}
+
+// runWorker fires the steps in order, wrapping back to step 0 after the
+// last one. Single-request mode is just a 1-step flow, so this is the
+// only worker body.
+func runWorker(ctx context.Context, client *http.Client, steps []stepSpec, out chan<- result) {
+	i := 0
+	for doRequest(ctx, client, steps[i], i, out) {
+		i = (i + 1) % len(steps)
 	}
 }
 
 // doRequest fires a single request and either sends its result or drops it on
 // shutdown. Returns false if the worker should stop (cancelled, bad URL, etc.).
-func doRequest(ctx context.Context, client *http.Client, spec requestSpec, out chan<- result) bool {
+func doRequest(ctx context.Context, client *http.Client, step stepSpec, stepIdx int, out chan<- result) bool {
 	if ctx.Err() != nil {
 		return false
 	}
+	// Render templates fresh on every request so {{uuid}}, {{seq}}, etc.
+	// produce a new value per call. For static templates Render returns
+	// the original literal string with no copy.
+	renderedURL := step.urlTmpl.Render()
+	renderedBody := step.bodyTmpl.Render()
 	var body io.Reader
-	if spec.body != "" {
+	if renderedBody != "" {
 		// Fresh reader per request — strings.NewReader is cheap to allocate
 		// and avoids consuming a shared reader across iterations.
-		body = strings.NewReader(spec.body)
+		body = strings.NewReader(renderedBody)
 	}
 	start := time.Now()
-	req, err := http.NewRequestWithContext(ctx, spec.method, spec.url, body)
+	req, err := http.NewRequestWithContext(ctx, step.method, renderedURL, body)
 	if err != nil {
 		// Malformed URL/method won't fix itself — emit one error and exit so we
 		// don't spin a CPU.
 		select {
-		case out <- result{latencyMs: 0, bucket: bucketNetworkErr}:
+		case out <- result{latencyMs: 0, bucket: bucketNetworkErr, stepIdx: stepIdx}:
 		case <-ctx.Done():
 		}
 		return false
 	}
-	for k, v := range spec.headers {
-		req.Header.Set(k, v)
+	for _, h := range step.headers {
+		req.Header.Set(h.key, h.val.Render())
 	}
 	resp, err := client.Do(req)
 	latencyMs := float64(time.Since(start).Microseconds()) / 1000.0
@@ -451,7 +548,7 @@ func doRequest(ctx context.Context, client *http.Client, spec requestSpec, out c
 		resp.Body.Close()
 	}
 	select {
-	case out <- result{latencyMs: latencyMs, bucket: bucket}:
+	case out <- result{latencyMs: latencyMs, bucket: bucket, stepIdx: stepIdx}:
 	case <-ctx.Done():
 		return false
 	}
@@ -466,7 +563,7 @@ func runCurveWorker(
 	slot int,
 	desired *atomic.Int64,
 	client *http.Client,
-	spec requestSpec,
+	steps []stepSpec,
 	out chan<- result,
 	active *atomic.Int64,
 ) {
@@ -484,6 +581,7 @@ func runCurveWorker(
 	}
 	defer setActive(false)
 
+	stepIdx := 0
 	for {
 		if ctx.Err() != nil {
 			return
@@ -498,9 +596,10 @@ func runCurveWorker(
 			continue
 		}
 		setActive(true)
-		if !doRequest(ctx, client, spec, out) {
+		if !doRequest(ctx, client, steps[stepIdx], stepIdx, out) {
 			return
 		}
+		stepIdx = (stepIdx + 1) % len(steps)
 	}
 }
 

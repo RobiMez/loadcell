@@ -18,11 +18,30 @@ export namespace engine {
 	        this.exponent = source["exponent"];
 	    }
 	}
+	export class StepConfig {
+	    url: string;
+	    method: string;
+	    headers: Record<string, string>;
+	    body: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new StepConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.url = source["url"];
+	        this.method = source["method"];
+	        this.headers = source["headers"];
+	        this.body = source["body"];
+	    }
+	}
 	export class Config {
 	    url: string;
 	    method: string;
 	    headers: Record<string, string>;
 	    body: string;
+	    steps?: StepConfig[];
 	    mode: string;
 	    concurrency: number;
 	    rampUpSecs: number;
@@ -40,6 +59,7 @@ export namespace engine {
 	        this.method = source["method"];
 	        this.headers = source["headers"];
 	        this.body = source["body"];
+	        this.steps = this.convertValues(source["steps"], StepConfig);
 	        this.mode = source["mode"];
 	        this.concurrency = source["concurrency"];
 	        this.rampUpSecs = source["rampUpSecs"];
@@ -112,6 +132,22 @@ export namespace engine {
 
 export namespace main {
 	
+	export class FlowRunStep {
+	    name: string;
+	    method: string;
+	    url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FlowRunStep(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.method = source["method"];
+	        this.url = source["url"];
+	    }
+	}
 	export class HeaderKV {
 	    key: string;
 	    value: string;
@@ -132,6 +168,9 @@ export namespace main {
 	    durationSecs: number;
 	    curve?: engine.CurvePoint[];
 	    noise?: number;
+	    flowId?: string;
+	    flowName?: string;
+	    steps?: FlowRunStep[];
 	
 	    static createFrom(source: any = {}) {
 	        return new RunConfig(source);
@@ -144,6 +183,9 @@ export namespace main {
 	        this.durationSecs = source["durationSecs"];
 	        this.curve = this.convertValues(source["curve"], engine.CurvePoint);
 	        this.noise = source["noise"];
+	        this.flowId = source["flowId"];
+	        this.flowName = source["flowName"];
+	        this.steps = this.convertValues(source["steps"], FlowRunStep);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -214,6 +256,26 @@ export namespace main {
 	        this.contentType = source["contentType"];
 	        this.elapsedMs = source["elapsedMs"];
 	        this.error = source["error"];
+	    }
+	}
+	export class SavedFlow {
+	    id: string;
+	    name: string;
+	    stepIds: string[];
+	    createdAt: string;
+	    updatedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SavedFlow(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.stepIds = source["stepIds"];
+	        this.createdAt = source["createdAt"];
+	        this.updatedAt = source["updatedAt"];
 	    }
 	}
 	export class SavedRequest {

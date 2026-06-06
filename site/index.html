@@ -112,6 +112,22 @@
       nav .links a:hover {
         color: var(--text);
       }
+      .nav-sponsor,
+      .foot-sponsor {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .nav-sponsor svg,
+      .foot-sponsor svg {
+        width: 13px;
+        height: 13px;
+        color: #c44d4d; /* warm heart, separate from the brand sage */
+      }
+      .nav-sponsor:hover svg,
+      .foot-sponsor:hover svg {
+        color: #b03939;
+      }
 
       /* ── Hero ──────────────────────────────────────── */
       header.hero {
@@ -312,12 +328,189 @@
         gap: 18px;
       }
       .platform {
+        position: relative;
         background: var(--inset);
         border: 1px solid var(--line);
         border-radius: 12px;
         padding: 24px;
         display: flex;
         flex-direction: column;
+      }
+      /* Tagged onto the platform card matching the visitor's OS. */
+      .platform.your-platform {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--sage-tint);
+      }
+      .platform.your-platform::before {
+        content: "Your platform";
+        position: absolute;
+        top: -10px;
+        right: 16px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding: 4px 9px;
+        border-radius: 999px;
+      }
+
+      /* Gatekeeper notice — full-width row under the platforms grid, plus
+         a compact echo on the hero CTA. Both share the dashed-rust palette
+         used for app-side cautions. */
+      .gk-row,
+      .gk-hero {
+        margin: 22px 0 0;
+        border: 1px dashed var(--line-strong);
+        border-radius: 8px;
+        background: var(--surface-2);
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .gk-hero {
+        display: inline-block;
+        margin-top: 14px;
+        font-size: 12px;
+        max-width: 520px;
+        text-align: left;
+      }
+      .gk-row summary,
+      .gk-hero summary {
+        cursor: pointer;
+        list-style: none;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        color: var(--rate);
+        font-weight: 500;
+        user-select: none;
+      }
+      .gk-row summary::-webkit-details-marker,
+      .gk-hero summary::-webkit-details-marker { display: none; }
+      .gk-row summary svg,
+      .gk-hero summary svg {
+        width: 15px;
+        height: 15px;
+        flex-shrink: 0;
+      }
+      .gk-row-eyebrow {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--rate);
+        background: rgba(138, 94, 54, 0.12);
+        padding: 2px 7px;
+        border-radius: 999px;
+      }
+      .gk-row-title {
+        color: var(--text);
+        font-weight: 500;
+      }
+      .gk-row-caret {
+        margin-left: auto;
+        color: var(--muted);
+        font-size: 12px;
+        transition: transform 160ms;
+      }
+      .gk-row[open] .gk-row-caret,
+      .gk-hero[open] .gk-row-caret {
+        transform: rotate(180deg);
+      }
+      .gk-row[open] summary,
+      .gk-hero[open] summary {
+        border-bottom: 1px dashed var(--line);
+      }
+      .gk-row-body {
+        padding: 12px 16px 14px;
+      }
+      .gk-row-body p {
+        margin: 0 0 8px;
+        line-height: 1.55;
+      }
+      .gk-row-body ol {
+        margin: 0;
+        padding-left: 20px;
+        line-height: 1.7;
+      }
+      .gk-row-body pre {
+        margin: 6px 0 0;
+        padding: 8px 10px;
+        background: var(--inset);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        overflow-x: auto;
+        font-size: 11px;
+      }
+      .gk-row-body code,
+      .gk-row-body pre code {
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 11px;
+        background: var(--inset);
+        color: var(--text);
+        padding: 1px 5px;
+        border-radius: 3px;
+        border: 1px solid var(--line);
+      }
+      .gk-row-body pre code {
+        background: transparent;
+        border: none;
+        padding: 0;
+      }
+      .gk-row-body em { color: var(--text); font-style: italic; }
+
+      /* Download-count line under each platform sub-heading. */
+      .dl-count {
+        margin: 0 0 18px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .dl-count-num {
+        background: var(--sage-tint);
+        color: var(--accent-strong);
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-weight: 600;
+        font-size: 11px;
+        letter-spacing: 0.02em;
+      }
+      .dl-total-line {
+        margin: 0 0 32px;
+        color: var(--muted);
+        font-size: 13px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #dl-total {
+        font-size: 22px;
+        font-weight: 600;
+        color: var(--text);
+        font-variant-numeric: tabular-nums;
+        letter-spacing: -0.01em;
+      }
+      .dl-total-suffix {
+        color: var(--muted);
+      }
+      .dl-total-sep {
+        margin: 0 6px;
+        color: var(--muted-2);
+        opacity: 0.6;
+      }
+      #dl-tag {
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 12px;
+        color: var(--accent-strong);
+        background: var(--surface);
+        padding: 1px 6px;
+        border-radius: 4px;
       }
       .platform .pico {
         font-size: 28px;
@@ -357,6 +550,17 @@
         background: var(--accent);
         color: #fff;
         border-color: var(--accent);
+      }
+      .platform .actions a.btn-dl {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+        font-weight: 500;
+      }
+      .platform .actions a.btn-dl:hover {
+        background: var(--accent-strong);
+        border-color: var(--accent-strong);
+        transform: translateY(-1px);
       }
       .platform .actions a.muted {
         color: var(--muted);
@@ -435,6 +639,59 @@
         padding: 1px 6px;
         border-radius: 4px;
         color: var(--accent-strong);
+      }
+
+      /* ── Sponsor section ───────────────────────────── */
+      .sponsor-section {
+        padding: 56px 0 24px;
+      }
+      .sponsor-card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 28px 32px;
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 22px;
+        align-items: center;
+      }
+      .sponsor-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 14px;
+        background: rgba(196, 77, 77, 0.08);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: #c44d4d;
+      }
+      .sponsor-icon svg {
+        width: 30px;
+        height: 30px;
+      }
+      .sponsor-copy h3 {
+        margin: 0 0 4px;
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--text);
+      }
+      .sponsor-copy p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.55;
+      }
+      .sponsor-btn svg {
+        width: 16px;
+        height: 16px;
+      }
+      @media (max-width: 640px) {
+        .sponsor-card {
+          grid-template-columns: 1fr;
+          text-align: left;
+          padding: 22px;
+        }
       }
 
       /* ── Footer ────────────────────────────────────── */
@@ -553,8 +810,14 @@
         </a>
         <div class="links">
           <a href="#features">Features</a>
-          <a href="#build">Get it</a>
-          <a class="gh-mobile" href="https://github.com/robimez/loadcell">GitHub →</a>
+          <a href="#download">Get it</a>
+          <a class="nav-sponsor" href="https://github.com/sponsors/RobiMez" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 21s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 5.65-7 10-7 10Z" />
+            </svg>
+            Sponsor
+          </a>
+          <a class="gh-mobile" href="https://github.com/RobiMez/loadcell">GitHub →</a>
         </div>
       </nav>
 
@@ -570,17 +833,23 @@
             with live RPS, latency percentiles, and error breakdowns.
           </p>
           <div class="cta-row">
-            <a class="btn btn-primary" href="#build">
+            <a
+              id="hero-dl"
+              class="btn btn-primary"
+              href="#download"
+              data-default-label="Get it"
+            >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="m8 6-6 6 6 6" />
-                <path d="m16 6 6 6-6 6" />
+                <path d="M12 3v12" />
+                <path d="m7 10 5 5 5-5" />
+                <path d="M5 21h14" />
               </svg>
-              Build from source
+              <span id="hero-dl-label">Get it</span>
             </a>
             <a
               class="btn btn-secondary"
-              href="https://github.com/robimez/loadcell"
+              href="https://github.com/RobiMez/loadcell"
             >
               <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path
@@ -590,10 +859,31 @@
               View on GitHub
             </a>
           </div>
-          <p class="platform-note">
-            No prebuilt binaries yet &mdash; if you have Go and Node, building
-            takes about three minutes.
+          <p class="platform-note" id="hero-note">
+            Or
+            <a href="#download">pick a different platform</a>
+            &middot; <a href="#build">build from source</a>
           </p>
+          <details class="gk-hero" id="gk-hero" hidden>
+            <summary>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 8v4" />
+                <path d="M12 16h.01" />
+              </svg>
+              Gatekeeper will flag it
+              <span class="gk-row-caret" aria-hidden="true">▾</span>
+            </summary>
+            <div class="gk-row-body">
+              <p>
+                The binary isn't notarized (yet), so first launch shows
+                "<em>cannot be opened…</em>." Right-click <code>loadcell.app</code>
+                &rarr; <strong>Open</strong>, or run:
+              </p>
+              <pre><code>xattr -dr com.apple.quarantine /Applications/loadcell.app</code></pre>
+            </div>
+          </details>
         </div>
 
         <div class="hero-shot" aria-hidden="false">
@@ -719,15 +1009,23 @@
     <section id="download" class="download">
       <div class="wrap">
         <div class="section-eyebrow">Get it</div>
-        <h2>Built from source, for now.</h2>
+        <h2>Grab a build.</h2>
         <p class="section-lede">
-          Prebuilt binaries aren&rsquo;t cut yet &mdash; the Wails build pipeline
-          is in place, releases will land on GitHub. Until then, every platform
-          ships the same way: <a href="#build">three commands</a>.
+          Prebuilt binaries are cut on demand from the GitHub Actions release
+          workflow. Pick your platform &mdash; or
+          <a href="#build">build from source</a> if you'd rather.
+        </p>
+        <p class="dl-total-line" id="dl-total-line" hidden>
+          <strong id="dl-total">—</strong>
+          <span class="dl-total-suffix">
+            downloads across <span id="dl-releases">—</span> release<span id="dl-releases-s">s</span>
+            <span class="dl-total-sep" aria-hidden="true">·</span>
+            latest <span id="dl-tag">v—</span>
+          </span>
         </p>
 
         <div class="platforms">
-          <div class="platform">
+          <div class="platform" id="card-macos">
             <div class="pico" aria-hidden="true">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M17.05 12.04c-.03-2.7 2.21-4 2.31-4.06-1.26-1.84-3.22-2.09-3.92-2.12-1.67-.17-3.26.98-4.11.98-.86 0-2.16-.95-3.55-.93-1.83.03-3.51 1.06-4.45 2.7-1.9 3.29-.49 8.16 1.36 10.83.9 1.31 1.97 2.78 3.37 2.73 1.36-.06 1.87-.88 3.51-.88 1.64 0 2.1.88 3.53.85 1.46-.02 2.38-1.33 3.27-2.65 1.03-1.52 1.46-2.99 1.48-3.07-.03-.01-2.83-1.09-2.86-4.32M14.32 4.18c.75-.91 1.26-2.17 1.12-3.43-1.08.04-2.39.72-3.17 1.62-.7.79-1.31 2.07-1.15 3.31 1.21.09 2.44-.61 3.2-1.5" />
@@ -735,46 +1033,92 @@
             </div>
             <h3>macOS</h3>
             <p class="sub">Universal binary &middot; Apple Silicon + Intel</p>
+            <p class="dl-count" hidden>
+              <span class="dl-count-num" data-asset="loadcell-darwin-universal.tar.gz">—</span>
+              downloads
+            </p>
             <div class="actions">
-              <a href="#build">Build from source →</a>
-              <a class="muted" href="https://github.com/robimez/loadcell/subscription">
-                Watch repo for releases
+              <a
+                class="btn-dl"
+                href="https://github.com/RobiMez/loadcell/releases/latest/download/loadcell-darwin-universal.tar.gz"
+              >Download .tar.gz</a>
+              <a class="muted" href="https://github.com/RobiMez/loadcell/releases">
+                All releases →
               </a>
             </div>
           </div>
 
-          <div class="platform">
+          <div class="platform" id="card-windows">
             <div class="pico" aria-hidden="true">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M2 4.5 10.5 3v8H2V4.5ZM2 12.5h8.5V21L2 19.5v-7ZM11.5 2.8 22 1v10H11.5V2.8ZM11.5 13H22v10l-10.5-1.5V13Z" />
               </svg>
             </div>
             <h3>Windows</h3>
-            <p class="sub">NSIS installer &middot; x64</p>
+            <p class="sub">Standalone .exe &middot; x64</p>
+            <p class="dl-count" hidden>
+              <span class="dl-count-num" data-asset="loadcell-windows-amd64.zip">—</span>
+              downloads
+            </p>
             <div class="actions">
-              <a href="#build">Build from source →</a>
-              <a class="muted" href="https://github.com/robimez/loadcell/subscription">
-                Watch repo for releases
+              <a
+                class="btn-dl"
+                href="https://github.com/RobiMez/loadcell/releases/latest/download/loadcell-windows-amd64.zip"
+              >Download .zip</a>
+              <a class="muted" href="https://github.com/RobiMez/loadcell/releases">
+                All releases →
               </a>
             </div>
           </div>
 
-          <div class="platform">
+          <div class="platform" id="card-linux">
             <div class="pico" aria-hidden="true">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 2c-1.55 0-2.3 1.4-2.3 3.2 0 .4-.1.8-.3 1.1-.4.6-1 1.1-1.4 1.7-.9 1.2-1.2 2.6-1.2 4 0 .4 0 .8.1 1.2-.7.6-1.4 1.5-1.8 2.5-.4 1.1-.4 2.3.1 3 .3.4.7.6 1.1.7-.2.3-.3.7-.3 1.1 0 .9.7 1.5 1.7 1.5.4 0 .9-.1 1.4-.3.5.4 1.1.6 1.7.6h2c.6 0 1.2-.2 1.7-.6.5.2 1 .3 1.4.3 1 0 1.7-.6 1.7-1.5 0-.4-.1-.8-.3-1.1.4-.1.8-.3 1.1-.7.5-.7.5-1.9.1-3-.4-1-1.1-1.9-1.8-2.5.1-.4.1-.8.1-1.2 0-1.4-.3-2.8-1.2-4-.4-.6-1-1.1-1.4-1.7-.2-.3-.3-.7-.3-1.1C14.3 3.4 13.55 2 12 2Zm-1.5 4.8c.4 0 .7.5.7 1.1s-.3 1.1-.7 1.1c-.4 0-.7-.5-.7-1.1s.3-1.1.7-1.1Zm3 0c.4 0 .7.5.7 1.1s-.3 1.1-.7 1.1c-.4 0-.7-.5-.7-1.1s.3-1.1.7-1.1Zm-1.5 2.6c.8 0 1.5.5 1.8 1.2-.5.4-1.1.6-1.8.6s-1.3-.2-1.8-.6c.3-.7 1-1.2 1.8-1.2Z" />
               </svg>
             </div>
             <h3>Linux</h3>
-            <p class="sub">Standalone binary &middot; any modern distro</p>
+            <p class="sub">Standalone binary &middot; amd64</p>
+            <p class="dl-count" hidden>
+              <span class="dl-count-num" data-asset="loadcell-linux-amd64.tar.gz">—</span>
+              downloads
+            </p>
             <div class="actions">
-              <a href="#build">Build from source →</a>
-              <a class="muted" href="https://github.com/robimez/loadcell">
-                View repo
+              <a
+                class="btn-dl"
+                href="https://github.com/RobiMez/loadcell/releases/latest/download/loadcell-linux-amd64.tar.gz"
+              >Download .tar.gz</a>
+              <a class="muted" href="https://github.com/RobiMez/loadcell/releases">
+                All releases →
               </a>
             </div>
           </div>
         </div>
+
+        <details class="gk-row" id="gk-row">
+          <summary>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 8v4" />
+              <path d="M12 16h.01" />
+            </svg>
+            <span class="gk-row-eyebrow">macOS</span>
+            <span class="gk-row-title">Gatekeeper will flag the binary on first launch</span>
+            <span class="gk-row-caret" aria-hidden="true">▾</span>
+          </summary>
+          <div class="gk-row-body">
+            <p>
+              The binary isn't notarized (yet), so the first launch shows
+              "<em>cannot be opened because the developer cannot be
+              verified</em>." Two quick ways past it:
+            </p>
+            <ol>
+              <li>Right-click <code>loadcell.app</code> &rarr; <strong>Open</strong>, then confirm in the dialog.</li>
+              <li>Or in Terminal: <code>xattr -dr com.apple.quarantine /Applications/loadcell.app</code></li>
+            </ol>
+          </div>
+        </details>
       </div>
     </section>
 
@@ -827,7 +1171,7 @@
 <span class="k">go</span> install github.com/wailsapp/wails/v2/cmd/wails@<span class="s">latest</span>
 
 <span class="c"># 2. Clone &amp; enter the repo</span>
-<span class="k">git</span> clone https://github.com/<span class="s">robimez</span>/loadcell.git
+<span class="k">git</span> clone https://github.com/<span class="s">RobiMez</span>/loadcell.git
 <span class="k">cd</span> loadcell
 
 <span class="c"># 3. Run in dev mode...</span>
@@ -839,18 +1183,226 @@
       </div>
     </section>
 
+    <section id="sponsor" class="sponsor-section">
+      <div class="wrap">
+        <div class="sponsor-card">
+          <div class="sponsor-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 21s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 5.65-7 10-7 10Z" />
+            </svg>
+          </div>
+          <div class="sponsor-copy">
+            <h3>Like it? Sponsor a few hours of build time.</h3>
+            <p>
+              LoadCell is free, open source, and built by one person ( <a class="underline" href="https://robi.work">robi</a> ) in
+              between a couple day jobs. If it saves you time ( and the 9$/m postman subscription), a small sponsorship helps fund more claude tokens & food ( in that order ).
+            </p>
+          </div>
+          <a
+            class="btn btn-primary sponsor-btn"
+            href="https://github.com/sponsors/RobiMez"
+            rel="noopener"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 21s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 5.65-7 10-7 10Z" />
+            </svg>
+            Sponsor on GitHub
+          </a>
+        </div>
+      </div>
+    </section>
+
     <footer>
       <div class="wrap foot-wrap">
         <div class="brand">
           <img src="loadcell.png" alt="" />
           LoadCell &middot;
-          <a href="https://github.com/robimez/loadcell/blob/main/LICENSE">GPLv3</a>
+          <a href="https://github.com/RobiMez/loadcell/blob/main/LICENSE">GPLv3</a>
         </div>
         <div class="foot-links">
-          <a href="https://github.com/robimez/loadcell">GitHub</a>
-          <a href="https://github.com/robimez/loadcell/issues">Issues</a>
+          <a href="https://github.com/RobiMez/loadcell">GitHub</a>
+          <a href="https://github.com/RobiMez/loadcell/issues">Issues</a>
+          <a class="foot-sponsor" href="https://github.com/sponsors/RobiMez" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 21s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 5.65-7 10-7 10Z" />
+            </svg>
+            Sponsor
+          </a>
         </div>
       </div>
     </footer>
+
+    <script>
+      // ── OS-aware hero download ──────────────────────────────
+      // Detect the visitor's OS and rewrite the hero CTA's href + label
+      // to the matching release asset. Falls back to the platform-picker
+      // anchor (#download) when the OS is unknown or it's a mobile browser
+      // — those users get the three-card grid below.
+      (function () {
+        var ASSETS = {
+          macos: {
+            label: "Download for macOS",
+            href: "https://github.com/RobiMez/loadcell/releases/latest/download/loadcell-darwin-universal.tar.gz",
+            cardId: "card-macos",
+          },
+          windows: {
+            label: "Download for Windows",
+            href: "https://github.com/RobiMez/loadcell/releases/latest/download/loadcell-windows-amd64.zip",
+            cardId: "card-windows",
+          },
+          linux: {
+            label: "Download for Linux",
+            href: "https://github.com/RobiMez/loadcell/releases/latest/download/loadcell-linux-amd64.tar.gz",
+            cardId: "card-linux",
+          },
+        };
+
+        function detectOS() {
+          var nav = window.navigator || {};
+          var hint = (nav.userAgentData && nav.userAgentData.platform) || nav.platform || "";
+          var ua = nav.userAgent || "";
+          var hay = (hint + " " + ua).toLowerCase();
+          // Mobile first so iPad's Mac-like userAgent doesn't false-positive.
+          if (/iphone|ipad|ipod|android/.test(hay)) return null;
+          if (/win/.test(hay)) return "windows";
+          if (/mac|darwin/.test(hay)) return "macos";
+          if (/linux|x11|cros/.test(hay)) return "linux";
+          return null;
+        }
+
+        var os = detectOS();
+        if (os) {
+          var asset = ASSETS[os];
+          var btn = document.getElementById("hero-dl");
+          var lbl = document.getElementById("hero-dl-label");
+          if (btn && lbl) {
+            btn.setAttribute("href", asset.href);
+            lbl.textContent = asset.label;
+          }
+          var card = document.getElementById(asset.cardId);
+          if (card) card.classList.add("your-platform");
+
+          // Echo the Gatekeeper notice next to the hero CTA + auto-open the
+          // row notice when we know the visitor is on macOS.
+          if (os === "macos") {
+            var heroNote = document.getElementById("gk-hero");
+            if (heroNote) heroNote.hidden = false;
+            var row = document.getElementById("gk-row");
+            if (row) row.setAttribute("open", "");
+          }
+        }
+      })();
+
+      // ── Download statistics from the GitHub API ─────────────
+      // Aggregate download counts across *all* releases so the per-card
+      // and grand-total numbers reflect cumulative interest, not just
+      // whatever's in the latest tag. Skips drafts/prereleases (their
+      // assets aren't user-facing). Caches the aggregated shape in
+      // sessionStorage for 5 min — the API itself caps anon callers at
+      // 60/hour per IP. Any failure leaves the placeholders hidden.
+      (function () {
+        var API = "https://api.github.com/repos/RobiMez/loadcell/releases?per_page=100";
+        var CACHE_KEY = "lc.releaseStats.v2";
+        var CACHE_TTL_MS = 5 * 60 * 1000;
+
+        function fmt(n) {
+          try { return Number(n).toLocaleString(); }
+          catch (e) { return String(n); }
+        }
+
+        // Walk the full /releases array; sum download_count per asset name
+        // and track the latest non-draft tag (newest createdAt).
+        function aggregate(releases) {
+          if (!Array.isArray(releases)) return null;
+          var perAsset = Object.create(null);
+          var total = 0;
+          var releaseCount = 0;
+          var latest = null;
+          for (var i = 0; i < releases.length; i++) {
+            var r = releases[i];
+            if (!r || r.draft) continue;
+            releaseCount++;
+            if (
+              !latest ||
+              (r.published_at && r.published_at > (latest.published_at || ""))
+            ) {
+              latest = r;
+            }
+            var assets = Array.isArray(r.assets) ? r.assets : [];
+            for (var j = 0; j < assets.length; j++) {
+              var a = assets[j];
+              if (!a || typeof a.download_count !== "number") continue;
+              perAsset[a.name] = (perAsset[a.name] || 0) + a.download_count;
+              total += a.download_count;
+            }
+          }
+          return {
+            perAsset: perAsset,
+            total: total,
+            releaseCount: releaseCount,
+            latestTag: latest ? latest.tag_name : null,
+          };
+        }
+
+        function render(agg) {
+          if (!agg) return;
+          var bumped = 0;
+          for (var name in agg.perAsset) {
+            var n = agg.perAsset[name];
+            var nodes = document.querySelectorAll(
+              '.dl-count-num[data-asset="' + name + '"]'
+            );
+            for (var k = 0; k < nodes.length; k++) {
+              nodes[k].textContent = fmt(n);
+              var line = nodes[k].closest(".dl-count");
+              if (line) line.hidden = false;
+              bumped++;
+            }
+          }
+          if (bumped === 0) return;
+          var totalEl = document.getElementById("dl-total");
+          var totalLine = document.getElementById("dl-total-line");
+          var tagEl = document.getElementById("dl-tag");
+          var relEl = document.getElementById("dl-releases");
+          var relSEl = document.getElementById("dl-releases-s");
+          if (totalEl) totalEl.textContent = fmt(agg.total);
+          if (tagEl && agg.latestTag) tagEl.textContent = agg.latestTag;
+          if (relEl) relEl.textContent = fmt(agg.releaseCount);
+          if (relSEl) relSEl.textContent = agg.releaseCount === 1 ? "" : "s";
+          if (totalLine) totalLine.hidden = false;
+        }
+
+        function readCache() {
+          try {
+            var raw = sessionStorage.getItem(CACHE_KEY);
+            if (!raw) return null;
+            var obj = JSON.parse(raw);
+            if (!obj || Date.now() - obj.ts > CACHE_TTL_MS) return null;
+            return obj.data;
+          } catch (e) { return null; }
+        }
+        function writeCache(data) {
+          try {
+            sessionStorage.setItem(
+              CACHE_KEY,
+              JSON.stringify({ ts: Date.now(), data: data })
+            );
+          } catch (e) { /* ignore quota */ }
+        }
+
+        var cached = readCache();
+        if (cached) { render(cached); return; }
+        if (typeof fetch !== "function") return;
+        fetch(API, { headers: { Accept: "application/vnd.github+json" } })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (data) {
+            var agg = aggregate(data);
+            if (!agg) return;
+            writeCache(agg);
+            render(agg);
+          })
+          .catch(function () { /* offline / blocked / 403 — no-op */ });
+      })();
+    </script>
   </body>
 </html>

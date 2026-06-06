@@ -12,6 +12,7 @@
 //   GET    /products/search     90% 2xx, 8% 429, 2% 5xx, slow tail
 //   POST   /checkout            risky: 50% 2xx, 30% 4xx, 15% 5xx, 5% 429
 //   GET    /reports/heavy       95% 2xx but expensive (200-500ms)
+//   ANY    /echo                always 200, reflects request back (debug)
 //
 // Anything else falls through to a catch-all that honors the legacy
 // env-tunables (PROB_500/PROB_429/PROB_404 etc.) so old scripts still work.
@@ -46,6 +47,22 @@ function clampProb(p) {
 }
 
 const app = express();
+
+// /echo captures the raw body before the global parsers run so we can
+// reflect it back verbatim — even when LoadCell sends no Content-Type
+// (which body-parser would otherwise ignore). Signals _body=true so the
+// downstream json/text middlewares skip the already-consumed stream.
+app.use('/echo', (req, res, next) => {
+  const chunks = [];
+  req.on('data', (c) => chunks.push(c));
+  req.on('end', () => {
+    req.rawBody = Buffer.concat(chunks).toString('utf8');
+    req._body = true;
+    next();
+  });
+  req.on('error', next);
+});
+
 // Capture body so we can inspect what LoadCell actually sent.
 app.use(express.json({ limit: '1mb', strict: false }));
 app.use(express.text({ limit: '1mb', type: '*/*' }));
@@ -259,6 +276,35 @@ app.get('/reports/heavy', (req, res) =>
   })
 );
 
+// Debug echo: always 200, no latency, no fault injection. Reflects the
+// rendered method/url/query/headers/body back so you can confirm what
+// LoadCell actually sent (e.g. that {{uuid}} got substituted to a real
+// value). Use any HTTP verb.
+app.all('/echo', (req, res) => {
+  if (firstHitAt === null) firstHitAt = Date.now();
+  total++;
+  counts.ok++;
+  methodCounts[req.method] = (methodCounts[req.method] || 0) + 1;
+  // Try to pretty-print JSON bodies so {{uuid}} renders as a value in
+  // the response viewer, but fall back to the raw string for anything
+  // else (form-encoded, plain text, malformed JSON, etc.).
+  let body = req.rawBody || null;
+  if (body) {
+    const t = body.trim();
+    if (t.startsWith('{') || t.startsWith('[')) {
+      try { body = JSON.parse(t); } catch { /* keep as string */ }
+    }
+  }
+  res.status(200).json({
+    method: req.method,
+    url: req.url,
+    path: req.path,
+    query: req.query,
+    headers: req.headers,
+    body,
+  });
+});
+
 // ─── Catch-all — preserves legacy env-tunable behavior ─────────────
 app.use((req, res) =>
   respond(req, res, {
@@ -316,6 +362,7 @@ app.listen(PORT, '127.0.0.1', () => {
   console.log('  GET    /products/search     90% 2xx, 8% 429, 2% 5xx, slow tail');
   console.log('  POST   /checkout            50% 2xx, 30% 402, 15% 5xx, 5% 429');
   console.log('  GET    /reports/heavy       95% 2xx, 200-500ms baseline');
+  console.log('  ANY    /echo                always 200, reflects request');
   console.log(
     `fallback   → 200:${pp(PROB_OK)}  404:${pp(PROB_404)}  429:${pp(PROB_429)}  500:${pp(PROB_500)}`
   );

@@ -3,15 +3,21 @@
 import {main} from '../models';
 import {engine} from '../models';
 
+export function DeleteFlow(arg1:string):Promise<void>;
+
 export function DeleteRequest(arg1:string):Promise<void>;
 
 export function DeleteRun(arg1:string):Promise<void>;
 
 export function ImportRun(arg1:string,arg2:string):Promise<main.SavedRun>;
 
+export function ListFlows():Promise<Array<main.SavedFlow>>;
+
 export function ListRequests():Promise<Array<main.SavedRequest>>;
 
 export function ListRuns():Promise<Array<main.SavedRun>>;
+
+export function SaveFlow(arg1:main.SavedFlow):Promise<main.SavedFlow>;
 
 export function SaveRequest(arg1:main.SavedRequest):Promise<main.SavedRequest>;
 

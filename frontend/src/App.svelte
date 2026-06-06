@@ -5,6 +5,7 @@
     Plus,
     Trash,
     CaretDown,
+    Pencil,
     FloppyDisk,
     Copy,
     Play,
@@ -27,6 +28,9 @@
     DeleteRun,
     ImportRun,
     SendSample,
+    ListFlows,
+    SaveFlow,
+    DeleteFlow,
   } from '../wailsjs/go/main/App.js';
   import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime.js';
   import { engine, main } from '../wailsjs/go/models';
@@ -61,12 +65,19 @@
     conc: number;
   };
 
+  type FlowRunStep = { name: string; method: string; url: string };
+
   type RunConfig = {
     mode: 'constant' | 'curve';
     concurrency: number;
     durationSecs: number;
     curve?: CurvePt[];
     noise?: number;
+    // Populated only when the run was a compound flow. Single-request
+    // runs leave these undefined.
+    flowId?: string;
+    flowName?: string;
+    steps?: FlowRunStep[];
   };
 
   type Run = {
@@ -115,6 +126,34 @@
   let reqBody = '';
   let tab: 'headers' | 'body' = 'headers';
   let saveHint = '';
+  let tokensExpanded = false;
+
+  // Compound flows. SavedFlow is an ordered list of SavedRequest IDs;
+  // activeFlow being non-null switches the loadtest pane into flow mode
+  // (StartTest receives a Steps array instead of single URL/method/etc).
+  type SavedFlowT = {
+    id: string;
+    name: string;
+    stepIds: string[];
+    createdAt: string;
+    updatedAt: string;
+  };
+  let flows: SavedFlowT[] = [];
+  let activeFlow: SavedFlowT | null = null;
+  // Resolved SavedRequest objects for activeFlow.stepIds, in order. Computed
+  // reactively so renames/edits to underlying requests flow through.
+  $: activeFlowSteps = activeFlow
+    ? (activeFlow.stepIds
+        .map((id) => requests.find((r) => r.id === id))
+        .filter((r): r is main.SavedRequest => !!r))
+    : [];
+
+  // Compose modal state. composeEditingId="" means "creating new", otherwise
+  // an edit of an existing flow.
+  let composeOpen = false;
+  let composeEditingId = '';
+  let composeName = '';
+  let composeStepIds: string[] = [];
 
   // Sample-send state — null until the first Send. While `sending` is true
   // the Send button shows a spinner and the existing response (if any) stays
@@ -206,20 +245,67 @@
     );
   }
 
+  // HTML-escape — used before wrapping anything as highlight markup so a
+  // pasted "<script>" in the URL/body can't inject DOM.
+  function escapeHtml(s: string): string {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // Token recognizer. Mirrors the Go parser (tmpl/tmpl.go) — anything not
+  // matched here is treated as literal text, so a typo like "{randInt:1:5}"
+  // simply doesn't get highlighted, signaling to the user that it won't
+  // render as a token. Whitespace inside the braces is tolerated to match
+  // Go-side trimming.
+  const TOKEN_RE = /\{\{\s*(uuid|seq|nowMs|randInt:\s*-?\d+\s*:\s*-?\d+)\s*\}\}/g;
+
+  function highlightTokens(htmlOrText: string): string {
+    return htmlOrText.replace(TOKEN_RE, (match, inner: string) => {
+      if (inner.startsWith('randInt:')) {
+        const nums = inner
+          .slice('randInt:'.length)
+          .split(':')
+          .map((p) => parseInt(p.trim(), 10));
+        // Reject inverted ranges (min > max) — the Go parser also rejects
+        // these, so the highlight stays honest about what will render.
+        if (nums.length !== 2 || nums.some(Number.isNaN) || nums[0] > nums[1]) {
+          return match;
+        }
+      }
+      return `<span class="lt-tok">${match}</span>`;
+    });
+  }
+
   // Request body highlighting — overlay strategy: a styled <pre> sits behind
   // a transparent-text <textarea>. Both share font/padding/wrap so glyph
   // positions line up; scroll is mirrored on every input/scroll event.
   let bodyOverlayEl: HTMLPreElement | null = null;
   let bodyTextareaEl: HTMLTextAreaElement | null = null;
 
+  // URL overlay — same idea applied to a single-line <input>. Horizontal
+  // scroll on the input gets mirrored to the overlay so tokens stay aligned.
+  let urlOverlayEl: HTMLDivElement | null = null;
+  let urlInputEl: HTMLInputElement | null = null;
+
+  // Header value overlays — one per header row. Refs and highlight HTML are
+  // parallel to reqHeaders by index. Adding/removing rows reshapes the
+  // arrays via the reactive .map below.
+  let hValueOverlayEls: (HTMLDivElement | null)[] = [];
+  let hValueInputEls: (HTMLInputElement | null)[] = [];
+
   $: reqBodyIsJson = (() => {
     const t = reqBody.trimStart();
     return t.startsWith('{') || t.startsWith('[');
   })();
-  // Highlight any JSON-shaped body — the regex tokenizer is lenient enough
-  // to color partial input as the user types, so highlighting doesn't pop
-  // in and out between every keystroke.
-  $: reqBodyHighlight = reqBodyIsJson && reqBody ? highlightJson(reqBody) : '';
+  // Layer order: HTML-escape → JSON highlight (if JSON-shaped) → token
+  // highlight. The token regex matches {{...}} sequences that survive both
+  // earlier steps untouched, so they compose without re-escaping.
+  $: reqBodyHighlight = reqBody
+    ? highlightTokens(reqBodyIsJson ? highlightJson(reqBody) : escapeHtml(reqBody))
+    : '';
+  $: reqUrlHighlight = reqUrl ? highlightTokens(escapeHtml(reqUrl)) : '';
+  $: hValueHighlights = reqHeaders.map((h) =>
+    h.value ? highlightTokens(escapeHtml(h.value)) : ''
+  );
 
   // Keep overlay scroll in lockstep with the textarea so highlighted spans
   // stay aligned with what the user is typing.
@@ -233,6 +319,31 @@
     void reqBody;
     requestAnimationFrame(syncBodyOverlayScroll);
   }
+
+  // Single-line URL input scrolls horizontally as it overflows; mirror that
+  // to the overlay so the highlighted spans track the caret.
+  function syncUrlOverlayScroll() {
+    if (!urlOverlayEl || !urlInputEl) return;
+    urlOverlayEl.scrollLeft = urlInputEl.scrollLeft;
+  }
+  $: if (urlOverlayEl && urlInputEl) {
+    void reqUrl;
+    requestAnimationFrame(syncUrlOverlayScroll);
+  }
+
+  // Per-row header-value overlay sync. Index-keyed because the row count
+  // changes when the user adds/removes headers.
+  function syncHeaderOverlay(i: number) {
+    const o = hValueOverlayEls[i];
+    const inp = hValueInputEls[i];
+    if (!o || !inp) return;
+    o.scrollLeft = inp.scrollLeft;
+  }
+  $: hValueHighlights.forEach((_, i) => {
+    if (hValueOverlayEls[i] && hValueInputEls[i]) {
+      requestAnimationFrame(() => syncHeaderOverlay(i));
+    }
+  });
 
   function formatRequestBody() {
     try {
@@ -769,21 +880,38 @@
   function openInfo() { infoOpen = true; }
   function closeInfo() { infoOpen = false; }
   function openRobiWork() { BrowserOpenURL('https://robi.work'); }
+  function openSponsor() { BrowserOpenURL('https://github.com/sponsors/RobiMez'); }
 
   function snapshotRun(m: Metrics) {
     if (history.length === 0) return;
+    // Flow runs: snapshot the resolved step list and flow name into
+    // config so the saved-run card can show the flow's identity instead
+    // of stale single-request fields. URL/Method on the run itself stay
+    // empty for flow runs — the sidebar branches on config.steps.
+    const flowConfig = activeFlow
+      ? {
+          flowId: activeFlow.id,
+          flowName: activeFlow.name,
+          steps: activeFlowSteps.map((r) => ({
+            name: r.name || 'Untitled',
+            method: r.method,
+            url: r.url,
+          })),
+        }
+      : {};
     const run: Run = {
       id: '', // backend assigns
       startedAt: runStartTs || Date.now(),
-      name: reqName || 'Untitled',
-      method: reqMethod,
-      url: reqUrl,
+      name: activeFlow ? activeFlow.name : reqName || 'Untitled',
+      method: activeFlow ? '' : reqMethod,
+      url: activeFlow ? '' : reqUrl,
       config: {
         mode,
         concurrency,
         durationSecs,
         curve: mode === 'curve' ? curvePoints.map((p) => ({ ...p })) : undefined,
         noise: mode === 'curve' ? noise : undefined,
+        ...flowConfig,
       },
       metrics: { ...m },
       history: history.map((s) => ({ ...s })),
@@ -926,6 +1054,8 @@
     } catch (e: any) {
       console.error('Failed to load runs:', e);
     }
+
+    await refreshFlows();
   });
 
   onDestroy(() => {
@@ -974,6 +1104,7 @@
 
   // ─── Request CRUD ────────────────────────────────────────────────────
   function newRequest() {
+    activeFlow = null;
     currentId = '';
     reqName = '';
     reqMethod = 'GET';
@@ -1003,6 +1134,8 @@
   //  - from Results: jump to Load test (user is picking what to test next).
   //  - from Request or Load test: stay put (user is editing or sequencing).
   function pickRequest(r: main.SavedRequest) {
+    // Leaving flow mode: a single-request selection takes precedence.
+    activeFlow = null;
     loadRequest(r);
     if (view === 'results') view = 'loadtest';
   }
@@ -1057,6 +1190,104 @@
     }
   }
 
+  // ─── Flow operations ─────────────────────────────────────────────
+  async function refreshFlows() {
+    try {
+      const fs = await ListFlows();
+      flows = (fs ?? []) as SavedFlowT[];
+      // If a flow is currently selected and its definition changed on disk,
+      // refresh activeFlow from the list so step changes propagate.
+      if (activeFlow) {
+        const updated = flows.find((f) => f.id === activeFlow!.id);
+        activeFlow = updated || null;
+        if (!activeFlow && view === 'loadtest') view = 'request';
+      }
+    } catch (e: any) {
+      console.error('Failed to load flows:', e);
+    }
+  }
+
+  function selectFlow(f: SavedFlowT) {
+    // Entering flow mode: clear single-request selection so the load-test
+    // pane shows the flow header instead of an unrelated request card.
+    currentId = '';
+    activeFlow = f;
+    activeRunIdx = -1;
+    view = 'loadtest';
+  }
+
+  async function deleteFlowEntry(id: string) {
+    if (!confirm('Delete this saved flow?')) return;
+    try {
+      await DeleteFlow(id);
+      if (activeFlow?.id === id) {
+        activeFlow = null;
+        if (view === 'loadtest') view = 'request';
+      }
+      await refreshFlows();
+    } catch (e: any) {
+      console.error('Delete flow failed:', e);
+    }
+  }
+
+  // ─── Compose modal ───────────────────────────────────────────────
+  function openCompose(f?: SavedFlowT) {
+    composeEditingId = f?.id || '';
+    composeName = f?.name || '';
+    composeStepIds = f ? [...f.stepIds] : [];
+    composeOpen = true;
+  }
+
+  function closeCompose() {
+    composeOpen = false;
+    composeEditingId = '';
+    composeName = '';
+    composeStepIds = [];
+  }
+
+  function composeAddStep(reqId: string) {
+    composeStepIds = [...composeStepIds, reqId];
+  }
+
+  function composeRemoveStep(idx: number) {
+    composeStepIds = composeStepIds.filter((_, i) => i !== idx);
+  }
+
+  function composeMoveStep(idx: number, dir: -1 | 1) {
+    const next = idx + dir;
+    if (next < 0 || next >= composeStepIds.length) return;
+    const copy = [...composeStepIds];
+    [copy[idx], copy[next]] = [copy[next], copy[idx]];
+    composeStepIds = copy;
+  }
+
+  async function saveCompose() {
+    const name = composeName.trim();
+    if (!name) return;
+    if (composeStepIds.length === 0) return;
+    try {
+      const saved = await SaveFlow({
+        id: composeEditingId,
+        name,
+        stepIds: composeStepIds,
+        createdAt: '',
+        updatedAt: '',
+      } as any);
+      await refreshFlows();
+      // Open the (new or just-edited) flow so the user sees the result.
+      const fresh = flows.find((f) => f.id === (saved as any).id);
+      if (fresh) selectFlow(fresh);
+      closeCompose();
+    } catch (e: any) {
+      console.error('Save flow failed:', e);
+    }
+  }
+
+  // composeAvailable: saved requests not yet in the step list. Same
+  // request can appear in the steps list multiple times (e.g. fetch
+  // → update → fetch again), so we don't filter out used IDs.
+  $: composeAvailable = requests;
+
   let flashTimer: any = null;
   function flashSaved(msg: string) {
     saveHint = msg;
@@ -1098,12 +1329,31 @@
     activeRunIdx = -1;
     hoverIdx = -1;
     try {
+      // Flow mode: build a Steps[] from the resolved request list. The
+      // engine ignores url/method/headers/body when Steps is non-empty,
+      // but we leave them as placeholders since createFrom validates
+      // shape rather than meaning.
+      const stepsPayload = activeFlow
+        ? activeFlowSteps.map((r) => ({
+            url: r.url,
+            method: r.method,
+            headers: (r.headers || []).reduce<Record<string, string>>(
+              (acc, h) => {
+                if (h.key) acc[h.key] = h.value;
+                return acc;
+              },
+              {}
+            ),
+            body: r.body || '',
+          }))
+        : [];
       await StartTest(
         engine.Config.createFrom({
-          url: reqUrl,
-          method: reqMethod,
-          headers: buildHeaderMap(),
-          body: reqBody,
+          url: activeFlow ? '' : reqUrl,
+          method: activeFlow ? '' : reqMethod,
+          headers: activeFlow ? {} : buildHeaderMap(),
+          body: activeFlow ? '' : reqBody,
+          steps: stepsPayload,
           mode,
           concurrency,
           rampUpSecs: 0,
@@ -1174,6 +1424,25 @@
   $: displayHistory = activeRun ? activeRun.history : history;
   $: displayMethod = activeRun ? activeRun.method : reqMethod;
   $: displayUrl    = activeRun ? activeRun.url    : reqUrl;
+  // Flow-aware shadows of the single-request display fields. For a flow
+  // run, the saved name lives in config.flowName and there's no single
+  // method/url — the header branches on displayIsFlow.
+  $: displayIsFlow = activeRun
+    ? !!(activeRun.config?.steps && activeRun.config.steps.length > 0)
+    : !!activeFlow;
+  $: displayFlowName = activeRun
+    ? activeRun.config?.flowName ?? activeRun.name
+    : (activeFlow?.name ?? '');
+  $: displayFlowStepCount = activeRun
+    ? (activeRun.config?.steps?.length ?? 0)
+    : (activeFlow?.stepIds.length ?? 0);
+  $: displayFlowSteps = activeRun
+    ? (activeRun.config?.steps ?? [])
+    : activeFlowSteps.map((r) => ({
+        name: r.name || 'Untitled',
+        method: r.method,
+        url: r.url,
+      }));
   $: displayIsLive = !activeRun;
   $: displayState  = activeRun ? 'done' : running ? 'running' : 'done';
   $: displayModeStr = activeRun
@@ -1629,7 +1898,7 @@
           <div class="side-head">
             <span class="side-title">Saved requests</span>
             <button class="side-new" type="button" on:click={newRequest} title="New request">
-              <Plus size={11} weight="bold" /> New
+              <Plus size={11} weight="duotone" /> New
             </button>
           </div>
           {#if requests.length === 0}
@@ -1643,6 +1912,43 @@
                     <span class="req-name">{r.name || 'Untitled'}</span>
                   </button>
                   <button class="req-del" type="button" on:click={() => deleteRequest(r.id)} title="Delete">
+                    <Trash size={14} />
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+
+        <div class="side-section flows-section">
+          <div class="side-head">
+            <span class="side-title">Saved flows</span>
+            <button
+              class="side-new"
+              type="button"
+              on:click={() => openCompose()}
+              disabled={requests.length === 0}
+              title={requests.length === 0 ? 'Save at least one request first' : 'Compose a new flow'}
+            >
+              <Plus size={11} weight="duotone" /> New
+            </button>
+          </div>
+          {#if requests.length === 0}
+            <p class="empty">Save some requests first, then compose them into a flow.</p>
+          {:else if flows.length === 0}
+            <p class="empty">No flows yet. <button class="empty-link" type="button" on:click={() => openCompose()}>Compose one</button> from your saved requests.</p>
+          {:else}
+            <ul class="flow-list">
+              {#each flows as f (f.id)}
+                <li class:active={activeFlow?.id === f.id}>
+                  <button class="flow-row" type="button" on:click={() => selectFlow(f)}>
+                    <span class="flow-badge">{f.stepIds.length}</span>
+                    <span class="flow-name">{f.name || 'Untitled'}</span>
+                  </button>
+                  <button class="flow-edit" type="button" on:click|stopPropagation={() => openCompose(f)} title="Edit steps">
+                    <Pencil size={12} weight="duotone" />
+                  </button>
+                  <button class="flow-del" type="button" on:click|stopPropagation={() => deleteFlowEntry(f.id)} title="Delete flow">
                     <Trash size={14} />
                   </button>
                 </li>
@@ -1687,11 +1993,14 @@
           {:else}
             <ul class="run-list">
               {#if running}
-                <li class="run-card-mini live" class:active={view === 'results' && activeRunIdx === -1}>
+                <li class="run-card-mini live" class:active={view === 'results' && activeRunIdx === -1} class:is-flow={!!activeFlow}>
                   <button class="rcm-main" type="button" on:click={() => selectRun(-1)}>
                     <div class="rcm-head">
                       <span class="rcm-live-dot" aria-hidden="true"></span>
-                      <span class="rcm-name">Live · {reqName || 'Untitled'}</span>
+                      {#if activeFlow}
+                        <span class="rcm-flow-badge">FLOW · {activeFlow.stepIds.length}</span>
+                      {/if}
+                      <span class="rcm-name">Live · {activeFlow ? activeFlow.name : reqName || 'Untitled'}</span>
                       <span class="rcm-time">running</span>
                     </div>
                     {#if metrics}
@@ -1716,10 +2025,15 @@
               {/if}
               {#each runs as r, i (r.id)}
                 {@const sp = miniSparkPath(r.history)}
-                <li class="run-card-mini" class:active={view === 'results' && activeRunIdx === i}>
+                {@const isFlow = !!(r.config?.steps && r.config.steps.length > 0)}
+                <li class="run-card-mini" class:active={view === 'results' && activeRunIdx === i} class:is-flow={isFlow}>
                   <button class="rcm-main" type="button" on:click={() => selectRun(i)}>
                     <div class="rcm-head">
-                      <span class="method m-{r.method.toLowerCase()}">{r.method}</span>
+                      {#if isFlow}
+                        <span class="rcm-flow-badge">FLOW · {r.config.steps?.length ?? 0}</span>
+                      {:else}
+                        <span class="method m-{r.method.toLowerCase()}">{r.method}</span>
+                      {/if}
                       <span class="rcm-name">{r.name || 'Untitled'}</span>
                       <span class="rcm-time">{fmtRunTime(r.startedAt)}</span>
                     </div>
@@ -1762,16 +2076,16 @@
         <div class="save-row">
           {#if saveHint}
             <span class="save-hint">
-              <CheckCircle size={13} weight="fill" />
+              <CheckCircle size={13} weight="duotone" />
               {saveHint}
             </span>
           {/if}
           <button class="btn btn-ghost" type="button" on:click={saveCurrent} disabled={running}>
-            <FloppyDisk size={13} weight="regular" /> Save
+            <FloppyDisk size={13} weight="duotone" /> Save
           </button>
           {#if currentId}
             <button class="btn btn-ghost" type="button" on:click={saveAsNew} disabled={running}>
-              <Copy size={13} weight="regular" /> Save as new
+              <Copy size={13} weight="duotone" /> Save as new
             </button>
           {/if}
           <button
@@ -1782,9 +2096,9 @@
             title="Send one request and show the response"
           >
             {#if sending}
-              <span class="btn-spin"><CircleNotch size={13} weight="bold" /></span>
+              <span class="btn-spin"><CircleNotch size={13} weight="duotone" /></span>
             {:else}
-              <PaperPlaneRight size={13} weight="fill" />
+              <PaperPlaneRight size={13} weight="duotone" />
             {/if}
             Send
           </button>
@@ -1800,7 +2114,7 @@
             disabled={running}
           >
             <span>{reqMethod}</span>
-            <span class="method-arrow"><CaretDown size={10} weight="bold" /></span>
+            <span class="method-arrow"><CaretDown size={10} weight="duotone" /></span>
           </button>
           {#if methodOpen}
             <div class="method-menu">
@@ -1815,15 +2129,81 @@
             </div>
           {/if}
         </div>
-        <input
-          class="url-input"
-          type="text"
-          bind:value={reqUrl}
-          placeholder="https://..."
-          spellcheck="false"
-          disabled={running}
-        />
+        <div class="url-input-wrap" class:highlighted={!!reqUrlHighlight}>
+          {#if reqUrlHighlight}
+            <div
+              class="url-input-overlay"
+              bind:this={urlOverlayEl}
+              aria-hidden="true"
+            >{@html reqUrlHighlight}</div>
+          {/if}
+          <input
+            class="url-input"
+            type="text"
+            bind:value={reqUrl}
+            bind:this={urlInputEl}
+            on:scroll={syncUrlOverlayScroll}
+            on:input={syncUrlOverlayScroll}
+            placeholder="https://..."
+            spellcheck="false"
+            disabled={running}
+          />
+        </div>
       </div>
+
+      <div class="tokens-hint">
+        <span class="tokens-hint-label">Dynamic tokens</span>
+        <code title="Random UUID v4 — each occurrence rolls independently">{'{{uuid}}'}</code>
+        <code title="Counter that grows 1, 2, 3 per request — shared across occurrences in one render">{'{{seq}}'}</code>
+        <code title="Current Unix time in milliseconds — snapshotted once per request">{'{{nowMs}}'}</code>
+        <code title="Random integer in [min, max] inclusive — each occurrence rolls independently">{'{{randInt:1:1000}}'}</code>
+        <button
+          type="button"
+          class="tokens-toggle"
+          class:open={tokensExpanded}
+          on:click={() => (tokensExpanded = !tokensExpanded)}
+          aria-expanded={tokensExpanded}
+        >
+          {tokensExpanded ? 'Hide' : 'How to use'}
+          <CaretDown size={10} weight="duotone" />
+        </button>
+      </div>
+
+      {#if tokensExpanded}
+        <div class="tokens-help">
+          <p class="tokens-help-intro">
+            Drop these anywhere in the URL, header values, or body. Each request renders them to fresh values — useful for defeating caches and tagging requests for tracing.
+          </p>
+          <dl class="tokens-help-list">
+            <dt><code>{'{{uuid}}'}</code></dt>
+            <dd>
+              Random UUID v4. Each occurrence in one template renders an independent value.
+              <span class="tokens-help-ex">→ <code>b693b66f-950a-40dc-b913-60486727cb37</code></span>
+            </dd>
+
+            <dt><code>{'{{seq}}'}</code></dt>
+            <dd>
+              Counter that grows <code>1, 2, 3, …</code> per request. Multiple <code>{'{{seq}}'}</code> in the same render all return the same number, so URL/body/header stay consistent for the same request.
+              <span class="tokens-help-ex">→ <code>1</code>, <code>2</code>, <code>3</code>, …</span>
+            </dd>
+
+            <dt><code>{'{{nowMs}}'}</code></dt>
+            <dd>
+              Current Unix time in milliseconds. Snapshotted once per request so all occurrences share the same instant.
+              <span class="tokens-help-ex">→ <code>1780623659570</code></span>
+            </dd>
+
+            <dt><code>{'{{randInt:min:max}}'}</code></dt>
+            <dd>
+              Random integer in <code>[min, max]</code> (both inclusive). Each occurrence rolls independently. Min must be ≤ max.
+              <span class="tokens-help-ex">→ <code>{'{{randInt:1:1000}}'}</code> renders as <code>441</code></span>
+            </dd>
+          </dl>
+          <p class="tokens-help-foot">
+            Unknown tokens (typos like <code>{'{{uid}}'}</code>) fail with an inline error instead of silently sending the literal text.
+          </p>
+        </div>
+      {/if}
 
       <div class="tabs">
         <button
@@ -1858,20 +2238,32 @@
                   spellcheck="false"
                   disabled={running}
                 />
-                <input
-                  type="text"
-                  placeholder="Value"
-                  bind:value={h.value}
-                  spellcheck="false"
-                  disabled={running}
-                />
+                <div class="h-value-wrap" class:highlighted={!!hValueHighlights[i]}>
+                  {#if hValueHighlights[i]}
+                    <div
+                      class="h-value-overlay"
+                      bind:this={hValueOverlayEls[i]}
+                      aria-hidden="true"
+                    >{@html hValueHighlights[i]}</div>
+                  {/if}
+                  <input
+                    type="text"
+                    placeholder="Value"
+                    bind:value={h.value}
+                    bind:this={hValueInputEls[i]}
+                    on:scroll={() => syncHeaderOverlay(i)}
+                    on:input={() => syncHeaderOverlay(i)}
+                    spellcheck="false"
+                    disabled={running}
+                  />
+                </div>
                 <button class="hdel" type="button" on:click={() => removeHeader(i)} disabled={running} title="Remove">
-                  <X size={12} weight="bold" />
+                  <X size={12} weight="duotone" />
                 </button>
               </div>
             {/each}
             <button class="add-header" type="button" on:click={addHeader} disabled={running}>
-              <Plus size={11} weight="bold" /> Add header
+              <Plus size={11} weight="duotone" /> Add header
             </button>
           </div>
         {:else}
@@ -1915,7 +2307,7 @@
               <span class="skel skel-chip" aria-hidden="true"></span>
               <span class="skel skel-text" style:width="80px" aria-hidden="true"></span>
               <span class="skel skel-text" style:width="60px" aria-hidden="true"></span>
-              <span class="resp-meta resp-sending"><CircleNotch size={11} weight="bold" /> sending…</span>
+              <span class="resp-meta resp-sending"><CircleNotch size={11} weight="duotone" /> sending…</span>
             {:else if sampleErr && !sampleResp}
               <span class="resp-status s-err">ERROR</span>
               <span class="resp-msg">{sampleErr}</span>
@@ -1971,9 +2363,9 @@
                     title="Copy body"
                   >
                     {#if copiedKey === 'resp-body'}
-                      <Check size={11} weight="bold" /> Copied
+                      <Check size={11} weight="duotone" /> Copied
                     {:else}
-                      <Copy size={11} weight="regular" /> Copy
+                      <Copy size={11} weight="duotone" /> Copy
                     {/if}
                   </button>
                 {:else}
@@ -1985,9 +2377,9 @@
                     title="Copy all headers as text"
                   >
                     {#if copiedKey === 'resp-headers-all'}
-                      <Check size={11} weight="bold" /> Copied
+                      <Check size={11} weight="duotone" /> Copied
                     {:else}
-                      <Copy size={11} weight="regular" /> Copy all
+                      <Copy size={11} weight="duotone" /> Copy all
                     {/if}
                   </button>
                 {/if}
@@ -2016,9 +2408,9 @@
                         aria-label={`Copy ${k}`}
                       >
                         {#if copiedKey === `rh-${k}`}
-                          <Check size={11} weight="bold" />
+                          <Check size={11} weight="duotone" />
                         {:else}
-                          <Copy size={11} weight="regular" />
+                          <Copy size={11} weight="duotone" />
                         {/if}
                       </button>
                     </div>
@@ -2031,20 +2423,53 @@
       {/if}
     </section>
     {:else if view === 'loadtest'}
-    <section class="builder loadtest-pane">
-      <div class="lt-request">
-        <span class="lt-request-label">Request</span>
-        <span class="method m-{reqMethod.toLowerCase()}">{reqMethod}</span>
-        <span class="lt-request-name">{reqName || 'Untitled'}</span>
-        <span class="lt-request-url" title={reqUrl}>{reqUrl}</span>
-        <button
-          type="button"
-          class="lt-request-edit"
-          on:click={() => (view = 'request')}
-          disabled={running}
-          title="Edit request"
-        >Edit</button>
-      </div>
+    <section class="builder loadtest-pane" class:flow-mode={!!activeFlow}>
+      {#if activeFlow}
+        <div class="lt-flow">
+          <div class="lt-flow-head">
+            <span class="lt-flow-label">Flow</span>
+            <span class="lt-flow-name">{activeFlow.name}</span>
+            <span class="lt-flow-count">{activeFlow.stepIds.length} step{activeFlow.stepIds.length === 1 ? '' : 's'}</span>
+            <button
+              type="button"
+              class="lt-flow-edit"
+              on:click={() => activeFlow && openCompose(activeFlow)}
+              disabled={running}
+              title="Edit flow"
+            >Edit</button>
+          </div>
+          <ol class="lt-flow-steps">
+            {#each activeFlowSteps as step, i}
+              <li class="lt-flow-step">
+                <span class="lt-flow-step-num">{i + 1}</span>
+                <span class="method m-{step.method.toLowerCase()}">{step.method}</span>
+                <span class="lt-flow-step-name">{step.name || 'Untitled'}</span>
+                <span class="lt-flow-step-url" title={step.url}>{step.url}</span>
+              </li>
+            {/each}
+            {#if activeFlowSteps.length < activeFlow.stepIds.length}
+              <li class="lt-flow-step missing">
+                <span class="lt-flow-step-num">!</span>
+                <span class="lt-flow-step-name">{activeFlow.stepIds.length - activeFlowSteps.length} step(s) reference deleted requests — edit the flow to fix</span>
+              </li>
+            {/if}
+          </ol>
+        </div>
+      {:else}
+        <div class="lt-request">
+          <span class="lt-request-label">Request</span>
+          <span class="method m-{reqMethod.toLowerCase()}">{reqMethod}</span>
+          <span class="lt-request-name">{reqName || 'Untitled'}</span>
+          <span class="lt-request-url" title={reqUrl}>{reqUrl}</span>
+          <button
+            type="button"
+            class="lt-request-edit"
+            on:click={() => (view = 'request')}
+            disabled={running}
+            title="Edit request"
+          >Edit</button>
+        </div>
+      {/if}
       <div class="profile">
         <div class="profile-head">
           <h3 class="profile-title">Load profile</h3>
@@ -2073,10 +2498,6 @@
                 <span class="k">Concurrency <span class="k-hint">max {MAX_WORKERS}</span></span>
                 <input type="number" bind:value={concurrency} min="1" max={MAX_WORKERS} disabled={running} />
               </label>
-              <label class="field">
-                <span class="k">Test duration (s)</span>
-                <input type="number" bind:value={durationSecs} min="1" disabled={running} />
-              </label>
             {:else}
               <label class="field">
                 <span class="k">Peak workers <span class="k-hint">max {MAX_WORKERS}</span></span>
@@ -2089,67 +2510,81 @@
                   disabled={running}
                 />
               </label>
-              <label class="field">
-                <span class="k">Test duration (s)</span>
-                <input type="number" bind:value={durationSecs} min="1" disabled={running} />
-              </label>
-              <div class="curve-tools">
-                <span class="k">Curve</span>
-                <button class="ct-btn" type="button" on:click={resetCurve} disabled={running}>Reset</button>
-                <span class="ct-hint">Click empty space to add · drag to move · right-click to delete · click a point to edit easing</span>
-              </div>
-              <div class="noise-row">
-                <span class="k">Noise <span class="noise-val">{Math.round(noise * 100)}%</span></span>
-                <input
-                  type="range"
-                  class="noise-slider"
-                  min="0"
-                  max="0.5"
-                  step="0.01"
-                  bind:value={noise}
-                  disabled={running}
-                />
-              </div>
-              {#if selectedPtIdx >= 0 && curvePoints[selectedPtIdx]}
+            {/if}
+            <label class="field">
+              <span class="k">Test duration (s)</span>
+              <input type="number" bind:value={durationSecs} min="1" disabled={running} />
+            </label>
+            <div class="curve-tools" class:lp-muted={mode !== 'curve'}>
+              <span class="ct-title">Curve</span>
+              <button class="ct-btn" type="button" on:click={resetCurve} disabled={mode !== 'curve' || running}>Reset</button>
+            </div>
+            <p class="ct-hint" class:lp-muted={mode !== 'curve'}>
+              Click empty space to add a point · drag to move · right-click to delete · click a point to edit its easing
+            </p>
+            <div class="noise-row" class:lp-muted={mode !== 'curve'}>
+              <span class="k">Noise <span class="noise-val">{Math.round(noise * 100)}%</span></span>
+              <input
+                type="range"
+                class="noise-slider"
+                min="0"
+                max="0.5"
+                step="0.01"
+                bind:value={noise}
+                disabled={mode !== 'curve' || running}
+              />
+            </div>
+            <div class="point-edit" class:lp-muted={!(mode === 'curve' && selectedPtIdx >= 0 && curvePoints[selectedPtIdx])}>
+              {#if mode === 'curve' && selectedPtIdx >= 0 && curvePoints[selectedPtIdx]}
                 {@const sp = curvePoints[selectedPtIdx]}
-                <div class="point-edit">
-                  <div class="pe-head">
-                    <span class="pe-title">Point @ {fmtDur(sp.timeSecs)}, {sp.users} users</span>
-                    {#if selectedPtIdx > 0 && curvePoints.length > 2}
-                      <button class="pe-del" type="button" on:click={deleteSelected} disabled={running} title="Delete point">
-                        <Trash size={12} />
-                      </button>
-                    {/if}
-                  </div>
-                  {#if selectedPtIdx > 0}
-                    <div class="pe-row">
-                      <span class="pe-label">Curve in</span>
-                      <div class="pe-segs">
-                        <button class="pe-seg" class:active={sp.curveIn === 'linear'} on:click={() => setSelectedCurve('linear')} disabled={running} type="button">Linear</button>
-                        <button class="pe-seg" class:active={sp.curveIn === 'exponential'} on:click={() => setSelectedCurve('exponential')} disabled={running} type="button">Expo</button>
-                        <button class="pe-seg" class:active={sp.curveIn === 'step'} on:click={() => setSelectedCurve('step')} disabled={running} type="button">Step</button>
-                      </div>
-                    </div>
-                    {#if sp.curveIn === 'exponential'}
-                      <div class="pe-row">
-                        <span class="pe-label">Exponent</span>
-                        <input
-                          type="range"
-                          class="pe-slider"
-                          min="0.3"
-                          max="5"
-                          step="0.1"
-                          value={sp.exponent}
-                          on:input={onExponentInput}
-                          disabled={running}
-                        />
-                        <span class="pe-val">{sp.exponent.toFixed(1)}</span>
-                      </div>
-                    {/if}
+                <div class="pe-head">
+                  <span class="pe-title">Point @ {fmtDur(sp.timeSecs)}, {sp.users} users</span>
+                  {#if selectedPtIdx > 0 && curvePoints.length > 2}
+                    <button class="pe-del" type="button" on:click={deleteSelected} disabled={running} title="Delete point">
+                      <Trash size={12} />
+                    </button>
                   {/if}
                 </div>
+                <div class="pe-row">
+                  <span class="pe-label">Curve in</span>
+                  <div class="pe-segs">
+                    <button class="pe-seg" class:active={sp.curveIn === 'linear'} on:click={() => setSelectedCurve('linear')} disabled={selectedPtIdx === 0 || running} type="button">Linear</button>
+                    <button class="pe-seg" class:active={sp.curveIn === 'exponential'} on:click={() => setSelectedCurve('exponential')} disabled={selectedPtIdx === 0 || running} type="button">Expo</button>
+                    <button class="pe-seg" class:active={sp.curveIn === 'step'} on:click={() => setSelectedCurve('step')} disabled={selectedPtIdx === 0 || running} type="button">Step</button>
+                  </div>
+                </div>
+                {#if sp.curveIn === 'exponential' && selectedPtIdx > 0}
+                  <div class="pe-row">
+                    <span class="pe-label">Exponent</span>
+                    <input
+                      type="range"
+                      class="pe-slider"
+                      min="0.3"
+                      max="5"
+                      step="0.1"
+                      value={sp.exponent}
+                      on:input={onExponentInput}
+                      disabled={running}
+                    />
+                    <span class="pe-val">{sp.exponent.toFixed(1)}</span>
+                  </div>
+                {/if}
+              {:else}
+                <div class="pe-head">
+                  <span class="pe-title pe-placeholder">
+                    {mode === 'curve' ? 'Click a point in the curve to edit its easing' : 'Switch to Curve mode to edit points'}
+                  </span>
+                </div>
+                <div class="pe-row">
+                  <span class="pe-label">Curve in</span>
+                  <div class="pe-segs">
+                    <button class="pe-seg" type="button" disabled>Linear</button>
+                    <button class="pe-seg" type="button" disabled>Expo</button>
+                    <button class="pe-seg" type="button" disabled>Step</button>
+                  </div>
+                </div>
               {/if}
-            {/if}
+            </div>
           </div>
 
           <div class="profile-preview">
@@ -2263,10 +2698,10 @@
 
         <div class="controls">
           <button class="btn btn-primary" type="button" on:click={start} disabled={running}>
-            <Play size={13} weight="fill" /> Start load test
+            <Play size={13} weight="duotone" /> Start load test
           </button>
           <button class="btn" type="button" on:click={stop} disabled={!running}>
-            <Stop size={13} weight="fill" /> Stop
+            <Stop size={13} weight="duotone" /> Stop
           </button>
         </div>
 
@@ -2279,8 +2714,13 @@
     <section class="results-pane">
       {#if displayMetrics || running || runs.length > 0}
       <div class="run-header">
-        <span class="status-method method m-{displayMethod.toLowerCase()}">{displayMethod}</span>
-        <span class="hr-url" title={displayUrl}>{displayUrl}</span>
+        {#if displayIsFlow}
+          <span class="rcm-flow-badge hr-flow-badge">FLOW · {displayFlowStepCount}</span>
+          <span class="hr-url" title={displayFlowName}>{displayFlowName}</span>
+        {:else}
+          <span class="status-method method m-{displayMethod.toLowerCase()}">{displayMethod}</span>
+          <span class="hr-url" title={displayUrl}>{displayUrl}</span>
+        {/if}
         <span class="hr-sep" aria-hidden="true">·</span>
         <span class="hr-state" class:running={displayIsLive && running}>{displayState}</span>
         <span class="hr-sep" aria-hidden="true">·</span>
@@ -2455,7 +2895,7 @@
               class="btn btn-primary"
               on:click={() => (view = 'loadtest')}
             >
-              <Play size={13} weight="fill" /> Open Load test
+              <Play size={13} weight="duotone" /> Open Load test
             </button>
             <button
               type="button"
@@ -2488,7 +2928,7 @@
           on:click={closeInfo}
           aria-label="Close"
         >
-          <X size={14} weight="bold" />
+          <X size={14} weight="duotone" />
         </button>
 
         <div class="info-mark" aria-hidden="true">
@@ -2534,6 +2974,108 @@
         >
           Built by Robi · robi.work →
         </button>
+
+        <button
+          type="button"
+          class="info-sponsor"
+          on:click={openSponsor}
+          title="Sponsor on GitHub"
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+            <path d="M12 21s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 5.65-7 10-7 10Z" />
+          </svg>
+          Sponsor on GitHub
+        </button>
+      </div>
+    </div>
+  {/if}
+
+  {#if composeOpen}
+    <div class="modal-backdrop" on:click|self={closeCompose} role="presentation">
+      <div class="modal compose-modal" role="dialog" aria-modal="true" aria-label="Compose flow">
+        <div class="modal-head">
+          <h3 class="modal-title">{composeEditingId ? 'Edit flow' : 'New flow'}</h3>
+          <button class="modal-close" type="button" on:click={closeCompose} title="Close">
+            <X size={14} weight="duotone" />
+          </button>
+        </div>
+        <div class="modal-body">
+          <label class="compose-name">
+            <span class="k">Name</span>
+            <input
+              type="text"
+              bind:value={composeName}
+              placeholder="e.g. checkout-journey"
+              spellcheck="false"
+            />
+          </label>
+          <div class="compose-panes">
+            <div class="compose-pane">
+              <div class="compose-pane-head">
+                <span class="compose-pane-title">Saved requests</span>
+                <span class="compose-pane-hint">click to add →</span>
+              </div>
+              {#if composeAvailable.length === 0}
+                <p class="compose-empty">No saved requests yet.</p>
+              {:else}
+                <ul class="compose-avail">
+                  {#each composeAvailable as r (r.id)}
+                    <li>
+                      <button class="compose-avail-row" type="button" on:click={() => composeAddStep(r.id)}>
+                        <span class="method m-{r.method.toLowerCase()}">{r.method}</span>
+                        <span class="compose-avail-name">{r.name || 'Untitled'}</span>
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </div>
+            <div class="compose-pane">
+              <div class="compose-pane-head">
+                <span class="compose-pane-title">Steps in order</span>
+                <span class="compose-pane-hint">{composeStepIds.length} step{composeStepIds.length === 1 ? '' : 's'}</span>
+              </div>
+              {#if composeStepIds.length === 0}
+                <p class="compose-empty">Pick requests on the left to build a flow.</p>
+              {:else}
+                <ol class="compose-steps">
+                  {#each composeStepIds as sid, i (i + ':' + sid)}
+                    {@const r = requests.find((x) => x.id === sid)}
+                    <li>
+                      <span class="compose-step-num">{i + 1}</span>
+                      {#if r}
+                        <span class="method m-{r.method.toLowerCase()}">{r.method}</span>
+                        <span class="compose-step-name">{r.name || 'Untitled'}</span>
+                      {:else}
+                        <span class="method m-deleted">DEL</span>
+                        <span class="compose-step-name compose-step-missing">deleted request</span>
+                      {/if}
+                      <div class="compose-step-actions">
+                        <button type="button" on:click={() => composeMoveStep(i, -1)} disabled={i === 0} title="Move up" aria-label="Move up">↑</button>
+                        <button type="button" on:click={() => composeMoveStep(i, 1)} disabled={i === composeStepIds.length - 1} title="Move down" aria-label="Move down">↓</button>
+                        <button type="button" on:click={() => composeRemoveStep(i)} title="Remove" aria-label="Remove">
+                          <X size={11} weight="duotone" />
+                        </button>
+                      </div>
+                    </li>
+                  {/each}
+                </ol>
+              {/if}
+            </div>
+          </div>
+          <p class="compose-note">
+            <strong>How flows run:</strong> Each worker fires step 1 → 2 → … → N in order, then loops. Workers are independent, so different workers may be on different steps at the same moment — no barrier between steps. Good for modeling real user journeys; not for "everyone fire step 1, then everyone fire step 2".
+          </p>
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-ghost" type="button" on:click={closeCompose}>Cancel</button>
+          <button
+            class="btn btn-primary"
+            type="button"
+            on:click={saveCompose}
+            disabled={!composeName.trim() || composeStepIds.length === 0}
+          >Save flow</button>
+        </div>
       </div>
     </div>
   {/if}
@@ -2657,7 +3199,7 @@
   /* ─── Workspace ───────────────────────────────────────────────── */
   .workspace {
     display: grid;
-    grid-template-columns: 240px 1fr;
+    grid-template-columns: 296px 1fr;
     gap: 14px;
     padding: 14px;
     min-height: 0;
@@ -2767,7 +3309,7 @@
   }
   .side-new {
     appearance: none;
-    background: transparent;
+    background: #fff;
     color: var(--text);
     border: 1px solid var(--line-strong);
     padding: 4px 10px 4px 8px;
@@ -2800,7 +3342,7 @@
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
     overflow-y: auto;
     min-height: 0;
     flex: 1;
@@ -2808,15 +3350,19 @@
   .req-list li {
     display: flex;
     align-items: stretch;
-    border-radius: 4px;
-    background: transparent;
-    transition: background 120ms;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: #fff;
+    transition: background 120ms, border-color 120ms;
   }
   .req-list li.active {
     background: var(--sage-tint);
+    border-color: rgba(72, 89, 65, 0.3);
   }
   .req-list li:hover:not(.active) {
-    background: rgba(72, 89, 65, 0.05);
+    background: #fff;
+    border-color: rgba(72, 89, 65, 0.16);
+    box-shadow: 0 1px 2px rgba(72, 89, 65, 0.04);
   }
   .req-row {
     flex: 1;
@@ -2859,6 +3405,124 @@
     color: var(--err);
     opacity: 1;
     background: rgba(120, 50, 50, 0.10);
+  }
+
+  /* ─── Saved-flow list (sidebar) ──────────────────────────────────── */
+  /* Flows section is content-sized — never shrinks under the runs
+     section, and renders each flow as a distinct card so the boundary
+     between rows is unambiguous (the previous flat-row style let the
+     second row visually run into the SAVED RUNS header below). */
+  .flows-section {
+    flex: 0 0 auto;
+  }
+  .flow-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    /* 3 rows × ~40px + 2 gaps × 4px = 128px. Anything past that scrolls
+       so the section can't push the saved-runs list off-screen. */
+    max-height: 132px;
+    overflow-y: auto;
+  }
+  .flow-list li {
+    display: flex;
+    align-items: stretch;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: #fff;
+    transition: background 120ms, border-color 120ms;
+  }
+  .flow-list li.active {
+    background: var(--sage-tint);
+    border-color: rgba(72, 89, 65, 0.3);
+  }
+  .flow-list li:hover:not(.active) {
+    background: #fff;
+    border-color: rgba(72, 89, 65, 0.16);
+    box-shadow: 0 1px 2px rgba(72, 89, 65, 0.04);
+  }
+  .flow-row {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    background: transparent;
+    border: none;
+    color: inherit;
+    padding: 8px 4px 8px 10px;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    min-width: 0;
+  }
+  .flow-badge {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent-strong);
+    font-variant-numeric: tabular-nums;
+  }
+  .flow-list li.active .flow-badge {
+    background: rgba(255, 255, 255, 0.85);
+    border-color: rgba(72, 89, 65, 0.3);
+  }
+  .flow-name {
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text);
+    min-width: 0;
+  }
+  .flow-edit,
+  .flow-del {
+    flex: 0 0 auto;
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    opacity: 0.4;
+    width: 26px;
+    cursor: pointer;
+    transition: all 120ms;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .flow-edit:hover {
+    color: var(--accent-strong);
+    opacity: 1;
+    background: rgba(72, 89, 65, 0.08);
+  }
+  .flow-del {
+    margin-right: 4px;
+  }
+  .flow-del:hover {
+    color: var(--err);
+    opacity: 1;
+    background: rgba(120, 50, 50, 0.10);
+  }
+  .empty-link {
+    appearance: none;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--accent-strong);
+    text-decoration: underline;
+    cursor: pointer;
   }
 
   /* ─── Saved-run cards (sidebar) ─────────────────────────────────── */
@@ -2914,6 +3578,24 @@
     gap: 6px;
     min-width: 0;
   }
+  /* FLOW badge for compound-run cards. Visually parallel to the method
+     chip (same height, same tracking) so the layout stays consistent
+     between single-request and flow runs. */
+  .rcm-flow-badge {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 7px;
+    background: var(--sage-tint);
+    border: 1px solid rgba(72, 89, 65, 0.25);
+    border-radius: 3px;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: var(--accent-strong);
+    font-variant-numeric: tabular-nums;
+    text-transform: uppercase;
+  }
   .rcm-name {
     flex: 1;
     font-size: 12px;
@@ -2940,6 +3622,7 @@
     color: var(--muted);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+    flex: 0 0 50px;
   }
   .rcm-pct strong {
     font-size: 13px;
@@ -3086,6 +3769,385 @@
     opacity: 0.4;
     cursor: not-allowed;
   }
+
+  /* ─── Flow run header (load-test pane, flow mode) ───────────────── */
+  .lt-flow {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .lt-flow-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .lt-flow-label {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 10px;
+    color: var(--accent-strong);
+    font-weight: 700;
+    background: var(--sage-tint);
+    border: 1px solid rgba(72, 89, 65, 0.30);
+    border-radius: 3px;
+  }
+  .lt-flow-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .lt-flow-count {
+    margin-left: 0;
+    padding: 1px 8px;
+    background: rgba(72, 89, 65, 0.12);
+    border-radius: 999px;
+    font-size: 11px;
+    color: var(--accent-strong);
+    font-weight: 500;
+  }
+  .lt-flow-edit {
+    margin-left: auto;
+    appearance: none;
+    background: #fff;
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    color: var(--text);
+    padding: 4px 12px;
+    font: inherit;
+    font-size: 11.5px;
+    cursor: pointer;
+    transition: border-color 120ms;
+  }
+  .lt-flow-edit:hover:not(:disabled) {
+    border-color: rgba(72, 89, 65, 0.45);
+  }
+  .lt-flow-edit:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .lt-flow-steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .lt-flow-step {
+    display: grid;
+    grid-template-columns: 28px auto 1fr auto;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+  }
+  .lt-flow-step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent-strong);
+    font-variant-numeric: tabular-nums;
+  }
+  .lt-flow-step.missing .lt-flow-step-num {
+    background: rgba(120, 50, 50, 0.12);
+    border-color: rgba(120, 50, 50, 0.3);
+    color: var(--err);
+  }
+  .lt-flow-step-name {
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .lt-flow-step.missing .lt-flow-step-name {
+    color: var(--err);
+    font-style: italic;
+  }
+  .lt-flow-step-url {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11.5px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  /* ─── Compose modal ──────────────────────────────────────────────── */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(20, 30, 25, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    backdrop-filter: blur(2px);
+  }
+  .modal {
+    background: var(--bg, #fff);
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    box-shadow: 0 20px 50px rgba(20, 30, 25, 0.2);
+    width: min(880px, 92vw);
+    max-height: 86vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--line);
+  }
+  .modal-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .modal-close {
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    padding: 4px;
+    cursor: pointer;
+    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-close:hover {
+    color: var(--text);
+    background: rgba(72, 89, 65, 0.08);
+  }
+  .modal-body {
+    padding: 18px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .modal-foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 18px;
+    border-top: 1px solid var(--line);
+  }
+  .compose-name {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .compose-name .k {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .compose-name input {
+    height: 34px;
+    padding: 0 10px;
+    background: var(--inset);
+    color: var(--text);
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    font: inherit;
+    font-size: 13px;
+  }
+  .compose-name input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(159, 184, 173, 0.15);
+  }
+  .compose-note {
+    margin: 0;
+    padding: 10px 12px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-left: 3px solid rgba(72, 89, 65, 0.35);
+    border-radius: 4px;
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--muted);
+  }
+  .compose-note strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .compose-panes {
+    display: grid;
+    grid-template-columns: 1fr 1.1fr;
+    gap: 12px;
+    min-height: 320px;
+  }
+  .compose-pane {
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .compose-pane-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .compose-pane-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  .compose-pane-hint {
+    font-size: 11px;
+    color: var(--muted);
+    opacity: 0.7;
+  }
+  .compose-empty {
+    margin: 0;
+    padding: 16px 12px;
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+  }
+  .compose-avail {
+    list-style: none;
+    margin: 0;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .compose-avail-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 10px;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+    transition: background 120ms;
+  }
+  .compose-avail-row:hover {
+    background: rgba(72, 89, 65, 0.10);
+  }
+  .compose-avail-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .compose-steps {
+    list-style: none;
+    margin: 0;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .compose-steps li {
+    display: grid;
+    grid-template-columns: 22px auto 1fr auto;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+  }
+  .compose-step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 5px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--accent-strong);
+    font-variant-numeric: tabular-nums;
+  }
+  .compose-step-name {
+    font-size: 12.5px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .compose-step-missing {
+    color: var(--err);
+    font-style: italic;
+  }
+  .compose-step-actions {
+    display: flex;
+    gap: 2px;
+  }
+  .compose-step-actions button {
+    appearance: none;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--muted);
+    width: 22px;
+    height: 22px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .compose-step-actions button:hover:not(:disabled) {
+    background: rgba(72, 89, 65, 0.10);
+    border-color: rgba(72, 89, 65, 0.18);
+    color: var(--text);
+  }
+  .compose-step-actions button:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+  .compose-step-actions button:last-child:hover:not(:disabled) {
+    background: rgba(120, 50, 50, 0.10);
+    border-color: rgba(120, 50, 50, 0.20);
+    color: var(--err);
+  }
+
   .results-pane {
     display: flex;
     flex-direction: column;
@@ -3152,23 +4214,26 @@
     flex: 1;
     height: 34px;
     padding: 0 10px;
-    background: transparent;
-    border: 1px solid transparent;
+    background: #fff;
+    border: 1px solid var(--line);
     color: var(--text);
     border-radius: 4px;
     font: inherit;
     font-size: 16px;
     font-weight: 500;
     letter-spacing: -0.005em;
+    transition: border-color 120ms, box-shadow 120ms;
   }
   .name-input::placeholder {
     color: var(--muted);
     opacity: 0.4;
     font-weight: 300;
   }
-  .name-input:hover:not(:disabled), .name-input:focus {
-    background: var(--inset);
+  .name-input:hover:not(:disabled) {
     border-color: var(--line-strong);
+  }
+  .name-input:focus {
+    border-color: rgba(72, 89, 65, 0.45);
     outline: none;
   }
   .save-row {
@@ -3269,23 +4334,185 @@
     background: var(--sage-tint);
     color: var(--accent);
   }
-  .url-input {
+  /* URL input + overlay: single-line variant of the body's overlay
+     pattern. .url-input-wrap holds both; .url-input-overlay sits behind
+     a transparent-text <input> so spans line up under the caret. */
+  .url-input-wrap {
+    position: relative;
     flex: 1;
+    display: flex;
+  }
+  .url-input,
+  .url-input-overlay {
+    width: 100%;
     height: 38px;
     padding: 0 12px;
-    background: var(--inset);
-    color: var(--text);
     border: 1px solid var(--line-strong);
     border-radius: 4px;
     font: inherit;
     font-size: 13px;
     font-family: "Lexend", ui-monospace, "SF Mono", Menlo, monospace;
     font-weight: 400;
+    line-height: 36px; /* 38 - 2*border */
+    box-sizing: border-box;
+  }
+  .url-input {
+    background: var(--inset);
+    color: var(--text);
   }
   .url-input:focus {
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(159, 184, 173, 0.15);
+  }
+  .url-input-overlay {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    background: var(--inset);
+    color: var(--text);
+    border-color: var(--line-strong);
+    white-space: pre;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .url-input-wrap.highlighted .url-input {
+    background: transparent;
+    color: transparent;
+    caret-color: var(--text);
+    position: relative;
+    z-index: 1;
+  }
+  .url-input-wrap.highlighted .url-input-overlay {
+    /* Hide the overlay's own border so the underlying input's border
+       (including its focus ring) is the single source of truth. Keep
+       the overlay's --inset background so the input area looks the
+       same as the non-highlighted state. */
+    border-color: transparent;
+  }
+
+  /* Recognized template token — used by both URL and body overlays. Must
+     stay metric-neutral or the overlay's glyphs drift right of the input's
+     glyphs (selection/caret misalign with what the user sees). Safe props:
+     background, color, border-radius (no width change), text-decoration,
+     box-shadow. UNSAFE: padding, border-width, font-weight (bold widens
+     glyphs in proportional fonts), font-size, letter-spacing, font-style. */
+  :global(.lt-tok) {
+    background: rgba(159, 184, 173, 0.38);
+    color: var(--accent-strong);
+    border-radius: 2px;
+    box-shadow: inset 0 -1px 0 rgba(72, 89, 65, 0.35);
+  }
+  .tokens-hint {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .tokens-hint-label {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 10px;
+    opacity: 0.75;
+  }
+  .tokens-hint code {
+    padding: 1px 6px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    color: var(--text);
+    cursor: help;
+  }
+  .tokens-toggle {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    font: inherit;
+    font-size: 11px;
+    color: var(--muted);
+    cursor: pointer;
+    transition: background 120ms, border-color 120ms, color 120ms;
+  }
+  .tokens-toggle :global(svg) {
+    transition: transform 160ms;
+  }
+  .tokens-toggle.open :global(svg) {
+    transform: rotate(180deg);
+  }
+  .tokens-toggle:hover {
+    background: var(--inset);
+    border-color: var(--line);
+    color: var(--text);
+  }
+
+  .tokens-help {
+    margin-top: 8px;
+    padding: 12px 14px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .tokens-help-intro,
+  .tokens-help-foot {
+    margin: 0;
+    color: var(--muted);
+  }
+  .tokens-help-foot {
+    margin-top: 10px;
+    font-size: 11px;
+  }
+  .tokens-help-list {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    column-gap: 16px;
+    row-gap: 10px;
+    margin: 12px 0 0 0;
+    align-items: start;
+  }
+  .tokens-help-list dt {
+    margin: 0;
+    padding-top: 1px;
+  }
+  .tokens-help-list dt code {
+    display: inline-block;
+    padding: 2px 6px;
+    background: var(--bg, #fff);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11.5px;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  .tokens-help-list dd {
+    margin: 0;
+    color: var(--text);
+  }
+  .tokens-help-list dd code {
+    padding: 0 4px;
+    background: rgba(0, 0, 0, 0.04);
+    border-radius: 2px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11.5px;
+  }
+  .tokens-help-ex {
+    display: block;
+    margin-top: 3px;
+    color: var(--muted);
+    font-size: 11px;
   }
   input:disabled, select:disabled, textarea:disabled {
     opacity: 0.55;
@@ -3367,6 +4594,46 @@
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 2px rgba(159, 184, 173, 0.15);
+  }
+  /* Header-value overlay: same metric-neutral pattern as the URL input.
+     The wrap fills the grid column; the overlay shares font/padding so
+     glyph positions line up with the underlying input. */
+  .h-value-wrap {
+    position: relative;
+    display: flex;
+  }
+  .h-value-wrap > input,
+  .h-value-overlay {
+    width: 100%;
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font: inherit;
+    font-size: 12px;
+    font-family: "Lexend", ui-monospace, monospace;
+    line-height: 30px;
+    box-sizing: border-box;
+  }
+  .h-value-overlay {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    background: var(--inset);
+    color: var(--text);
+    white-space: pre;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .h-value-wrap.highlighted > input {
+    background: transparent;
+    color: transparent;
+    caret-color: var(--text);
+    position: relative;
+    z-index: 1;
+  }
+  .h-value-wrap.highlighted .h-value-overlay {
+    border-color: transparent;
   }
   .hdel {
     appearance: none;
@@ -3567,13 +4834,24 @@
     border: 1px solid var(--line);
     border-radius: 4px;
   }
-  .curve-tools .k {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
+  /* Curve-only blocks stay mounted in Fixed mode so the panel doesn't
+     jump in height when toggling Fixed/Curve. Dim them so they read as
+     inactive; their own buttons/inputs already have disabled attrs. */
+  .lp-muted {
+    opacity: 0.55;
+    filter: saturate(0.6);
+  }
+  .pe-placeholder {
     color: var(--muted);
-    opacity: 0.7;
-    font-weight: 500;
+    font-style: italic;
+    font-weight: 400;
+  }
+  .ct-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.10em;
+    color: var(--muted);
+    font-weight: 600;
     flex: 1;
   }
   .ct-btn {
@@ -3593,10 +4871,15 @@
     border-color: var(--accent);
     color: var(--accent);
   }
+  .ct-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
   .ct-hint {
-    font-size: 10px;
+    margin: -2px 0 0 0;
+    font-size: 11px;
     color: var(--muted);
-    opacity: 0.65;
+    line-height: 1.5;
     font-style: italic;
   }
 
@@ -3884,9 +5167,9 @@
     cursor: not-allowed;
   }
   .btn-ghost {
-    height: 32px;
     padding: 0 12px;
     font-size: 12px;
+    background: #fff;
   }
   .btn-primary {
     background: var(--accent);
@@ -4314,6 +5597,12 @@
   }
   .run-header .status-method {
     margin: 0;
+  }
+  /* Header-sized FLOW badge — scales up from the sidebar variant so it
+     sits proportionally next to the method-chip-replaced .hr-url. */
+  .hr-flow-badge {
+    padding: 4px 10px;
+    font-size: 10.5px;
   }
   .hr-url {
     color: var(--text);
@@ -5018,6 +6307,36 @@
   .info-link:hover {
     background: var(--accent-strong);
     border-color: var(--accent-strong);
+  }
+  .info-sponsor {
+    appearance: none;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--line-strong);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-top: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: border-color 120ms, color 120ms, background 120ms;
+  }
+  .info-sponsor svg {
+    width: 13px;
+    height: 13px;
+    color: #c44d4d;
+  }
+  .info-sponsor:hover {
+    border-color: var(--accent);
+    color: var(--accent-strong);
+    background: rgba(72, 89, 65, 0.05);
+  }
+  .info-sponsor:hover svg {
+    color: #b03939;
   }
   @keyframes lc-fade-in {
     from { opacity: 0; }
