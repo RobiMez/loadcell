@@ -14,6 +14,7 @@
     PaperPlaneRight,
     CircleNotch,
     Check,
+    DownloadSimple,
   } from 'phosphor-svelte';
   import {
     StartTest,
@@ -24,6 +25,7 @@
     ListRuns,
     SaveRun,
     DeleteRun,
+    ImportRun,
     SendSample,
   } from '../wailsjs/go/main/App.js';
   import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime.js';
@@ -827,6 +829,38 @@
     }
   }
 
+  // Import — parse a result file produced by an external load-testing tool
+  // (k6, vegeta, ...) into a SavedRun and surface it like a native run.
+  let importInputEl: HTMLInputElement | null = null;
+  let importing = false;
+  let importError = '';
+
+  function triggerImport() {
+    importError = '';
+    importInputEl?.click();
+  }
+
+  async function onImportFile(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    importing = true;
+    importError = '';
+    try {
+      const text = await file.text();
+      const persisted = (await ImportRun(file.name, text)) as unknown as Run;
+      runs = [persisted, ...runs];
+      activeRunIdx = 0;
+      view = 'results';
+    } catch (err) {
+      importError = String((err as any)?.message ?? err);
+      console.error('ImportRun failed:', err);
+    } finally {
+      importing = false;
+      input.value = ''; // allow re-importing the same file
+    }
+  }
+
   function fmtRunTime(ts: number): string {
     const d = new Date(ts);
     const h = String(d.getHours()).padStart(2, '0');
@@ -1623,9 +1657,33 @@
             {#if runs.length > 0}
               <span class="side-count">{runs.length}</span>
             {/if}
+            <button
+              class="side-action"
+              type="button"
+              on:click={triggerImport}
+              disabled={importing}
+              title="Import results from k6, vegeta, …"
+            >
+              {#if importing}
+                <CircleNotch size={12} class="spin" />
+              {:else}
+                <DownloadSimple size={12} />
+              {/if}
+              Import
+            </button>
           </div>
+          <input
+            type="file"
+            accept=".json,.ndjson,.txt,application/json,text/plain"
+            class="hidden-file-input"
+            bind:this={importInputEl}
+            on:change={onImportFile}
+          />
+          {#if importError}
+            <p class="import-error" role="alert">{importError}</p>
+          {/if}
           {#if runs.length === 0 && !running}
-            <p class="empty">No runs yet. Start a load test to fill this list.</p>
+            <p class="empty">No runs yet. Start a load test, or <button type="button" class="link-btn" on:click={triggerImport}>import results</button> from k6 or vegeta.</p>
           {:else}
             <ul class="run-list">
               {#if running}
@@ -2637,8 +2695,58 @@
   .side-head {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 6px;
     padding: 2px 4px;
+  }
+  .side-action {
+    margin-left: auto;
+    appearance: none;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--line-strong);
+    padding: 3px 8px 3px 6px;
+    border-radius: 4px;
+    font: inherit;
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 120ms;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .side-action:hover:not(:disabled) {
+    background: rgba(159, 184, 173, 0.10);
+    border-color: var(--accent);
+    color: var(--accent-strong);
+  }
+  .side-action:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .hidden-file-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .import-error {
+    color: #c0563b;
+    font-size: 11px;
+    margin: 6px 4px;
+    line-height: 1.5;
+    word-break: break-word;
+  }
+  .link-btn {
+    appearance: none;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--accent-strong);
+    text-decoration: underline;
+    cursor: pointer;
   }
   .side-count {
     font-size: 10px;
