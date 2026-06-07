@@ -37,64 +37,18 @@
   import { engine, main } from '../wailsjs/go/models';
   import NumberFlow from './NumberFlow.svelte';
   import logoUrl from './assets/images/loadcell.png';
-
-  type Metrics = {
-    elapsedSecs: number;
-    totalRequests: number;
-    successful: number;
-    clientErrors: number;
-    rateLimited: number;
-    serverErrors: number;
-    networkErrors: number;
-    errors: number;
-    rps: number;
-    errorRate: number;
-    p50Ms: number;
-    p95Ms: number;
-    p99Ms: number;
-    currentConcurrency: number;
-    running: boolean;
-  };
-
-  type Sample = {
-    t: number;
-    tickRps: number;
-    tickRpsOk: number;
-    p50: number;
-    p95: number;
-    p99: number;
-    conc: number;
-  };
-
-  type FlowRunStep = { name: string; method: string; url: string };
-
-  type RunConfig = {
-    mode: 'constant' | 'curve';
-    concurrency: number;
-    durationSecs: number;
-    curve?: CurvePt[];
-    noise?: number;
-    // Populated only when the run was a compound flow. Single-request
-    // runs leave these undefined.
-    flowId?: string;
-    flowName?: string;
-    steps?: FlowRunStep[];
-  };
-
-  type Run = {
-    id: string;
-    startedAt: number;          // ms epoch
-    name: string;
-    method: string;
-    url: string;
-    config: RunConfig;
-    metrics: Metrics;
-    history: Sample[];
-  };
-
-  type HeaderRow = { key: string; value: string };
-
-  const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const;
+  import type {
+    Metrics,
+    Sample,
+    FlowRunStep,
+    RunConfig,
+    Run,
+    HeaderRow,
+    SavedFlowT,
+    CurveType,
+    CurvePt,
+  } from './types';
+  import { METHODS } from './types';
 
   // Custom method dropdown — native <select> opens a system popup that
   // WKWebView renders modally, which makes the UI hard to drive via
@@ -133,13 +87,6 @@
   // Compound flows. SavedFlow is an ordered list of SavedRequest IDs;
   // activeFlow being non-null switches the loadtest pane into flow mode
   // (StartTest receives a Steps array instead of single URL/method/etc).
-  type SavedFlowT = {
-    id: string;
-    name: string;
-    stepIds: string[];
-    createdAt: string;
-    updatedAt: string;
-  };
   let flows: SavedFlowT[] = [];
   let activeFlow: SavedFlowT | null = null;
   // Resolved SavedRequest objects for activeFlow.stepIds, in order. Computed
@@ -397,8 +344,6 @@
   }
 
   // ─── Load-profile state ──────────────────────────────────────────────
-  type CurveType = 'linear' | 'exponential' | 'step';
-  type CurvePt = { timeSecs: number; users: number; curveIn: CurveType; exponent: number };
 
   // Ceiling on concurrent workers — clamps the editor + protects the engine
   // from spawning thousands of goroutines by accident. User-settable from
