@@ -28,13 +28,11 @@ jobs:
             platform: darwin/universal
             name: macOS · universal
             artifact: loadcell-darwin-universal.tar.gz
-          # Pin to 22.04: Wails v2.12 links against webkit2gtk-4.0, which the
-          # 24.04 (noble) ubuntu-latest runner no longer ships. The resulting
-          # binary still runs on newer distros via dynamic linking.
-          - os: ubuntu-22.04
+          - os: ubuntu-latest
             platform: linux/amd64
             name: Linux · amd64
             artifact: loadcell-linux-amd64.tar.gz
+            pkgconfig_dir: /usr/lib/x86_64-linux-gnu/pkgconfig
           - os: windows-latest
             platform: windows/amd64
             name: Windows · amd64
@@ -54,17 +52,19 @@ jobs:
           node-version: "20"
 
       - name: Install Linux WebKit deps
-        if: startsWith(matrix.os, 'ubuntu')
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libgtk-3-dev \
-            libwebkit2gtk-4.0-dev \
+            libwebkit2gtk-4.1-dev \
             build-essential \
             pkg-config
+          # create symlink for webkit2gtk-4.0 -> webkit2gtk-4.1 (ubuntu 24.04 compatibility)
+          sudo ln -sf "${{ matrix.pkgconfig_dir }}/webkit2gtk-4.1.pc" "${{ matrix.pkgconfig_dir }}/webkit2gtk-4.0.pc"
 
       - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
       - name: Build (${{ matrix.platform }})
         shell: bash

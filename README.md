@@ -96,7 +96,7 @@ and the [Wails CLI](https://wails.io).
 
 ```bash
 # 1. Install the Wails CLI
-go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
 # 2. Clone & enter the repo
 git clone https://github.com/RobiMez/loadcell.git
@@ -109,10 +109,10 @@ wails dev
 wails build
 ```
 
-On Linux you'll also need GTK/WebKit headers:
+On Linux you'll also need GTK/WebKit headers (v2.10+ of the Wails CLI requires webkit2gtk-4.1):
 
 ```bash
-sudo apt install libgtk-3-dev libwebkit2gtk-4.0-dev build-essential pkg-config
+sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev build-essential pkg-config
 ```
 
 ---

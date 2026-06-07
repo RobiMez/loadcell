@@ -8,7 +8,7 @@ LoadCell is a desktop HTTP load-testing app: Go backend (engine + persistence) g
 
 ## Commands
 
-Wails CLI must be installed once: `go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0`.
+Wails CLI must be installed once: `go install github.com/wailsapp/wails/v2/cmd/wails@latest` (v2.10+ is required; older v2.x only links webkit2gtk-4.0).
 
 - `wails dev` — hot-reloading dev mode (Vite watches the frontend, Go side rebuilds on save).
 - `wails build` — produce a redistributable in `build/bin/`. CI uses `wails build -platform <darwin/universal|linux/amd64|windows/amd64> -clean -trimpath`.
@@ -17,7 +17,7 @@ Wails CLI must be installed once: `go install github.com/wailsapp/wails/v2/cmd/w
 - `cd frontend && npm run build` / `npm run dev` — invoked by Wails via `wails.json`; rarely run by hand.
 - `cd tools/echo-server && node server.js` — local Express target on `:4466` with nine routes that mix status codes and latency profiles; the README table lists them.
 
-Linux dev requires `libgtk-3-dev libwebkit2gtk-4.0-dev build-essential pkg-config`. The release workflow pins Ubuntu 22.04 because Wails 2.12 links webkit2gtk-4.0, which 24.04 drops.
+Linux dev requires `libgtk-3-dev libwebkit2gtk-4.1-dev build-essential pkg-config`. The release workflow runs on `ubuntu-latest` (24.04) and links webkit2gtk-4.1; end users also need `libwebkit2gtk-4.1-0` on the host at runtime.
 
 No automated test suite exists. `cmd/check` is the smoke test for the engine.
 
