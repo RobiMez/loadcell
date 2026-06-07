@@ -121,6 +121,41 @@ func TestVegeta(t *testing.T) {
 	}
 }
 
+// `vegeta encode -to=json` NDJSON: one result per line. Three requests
+// over two seconds: one 200, one 500, one transport error (code=0).
+const vegetaEncodedNDJSON = `{"attack":"","seq":0,"code":200,"timestamp":"2026-06-05T10:00:00.100Z","latency":12000000,"method":"GET","url":"https://ex.com/ok","error":""}
+{"attack":"","seq":1,"code":500,"timestamp":"2026-06-05T10:00:00.500Z","latency":45000000,"method":"GET","url":"https://ex.com/ok","error":""}
+{"attack":"","seq":2,"code":0,"timestamp":"2026-06-05T10:00:01.200Z","latency":1000000,"method":"GET","url":"https://ex.com/ok","error":"dial tcp: connection refused"}`
+
+func TestVegetaEncodedNDJSON(t *testing.T) {
+	run, err := ImportRun("results.json", []byte(vegetaEncodedNDJSON))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if run.Method != "GET" || run.URL != "https://ex.com/ok" {
+		t.Errorf("method/url = %q %q", run.Method, run.URL)
+	}
+	if run.Metrics.TotalRequests != 3 {
+		t.Errorf("total=%d want 3", run.Metrics.TotalRequests)
+	}
+	if run.Metrics.Successful != 1 || run.Metrics.ServerErrors != 1 || run.Metrics.NetworkErrors != 1 {
+		t.Errorf("ok/5xx/net = %d/%d/%d want 1/1/1",
+			run.Metrics.Successful, run.Metrics.ServerErrors, run.Metrics.NetworkErrors)
+	}
+	if len(run.History) != 2 {
+		t.Fatalf("history len=%d want 2 (two seconds)", len(run.History))
+	}
+	if run.History[0].TickRps != 2 || run.History[0].TickRpsOk != 1 {
+		t.Errorf("sec0 rps=%v ok=%v want 2/1", run.History[0].TickRps, run.History[0].TickRpsOk)
+	}
+	if run.History[1].TickRps != 1 {
+		t.Errorf("sec1 rps=%v want 1", run.History[1].TickRps)
+	}
+	if run.Config.Mode != "imported" {
+		t.Errorf("mode=%q want imported", run.Config.Mode)
+	}
+}
+
 func TestUnknownFormat(t *testing.T) {
 	if _, err := ImportRun("x", []byte(`{"foo":"bar"}`)); err == nil {
 		t.Error("expected error for unknown format")

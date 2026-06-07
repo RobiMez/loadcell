@@ -16,6 +16,7 @@
     CircleNotch,
     Check,
     DownloadSimple,
+    UploadSimple,
   } from 'phosphor-svelte';
   import {
     StartTest,
@@ -114,6 +115,7 @@
   function handleDocKey(e: KeyboardEvent) {
     if (methodOpen && e.key === 'Escape') methodOpen = false;
     if (infoOpen && e.key === 'Escape') infoOpen = false;
+    if (importOpen && e.key === 'Escape') closeImport();
   }
 
   // ─── Request-builder state ───────────────────────────────────────────
@@ -958,20 +960,38 @@
   }
 
   // Import — parse a result file produced by an external load-testing tool
-  // (k6, vegeta, ...) into a SavedRun and surface it like a native run.
+  // (k6, vegeta, ...) into a SavedRun and surface it like a native run. The
+  // user picks a file through a modal with format instructions and a
+  // drag-and-drop zone; the underlying flow then mirrors any other run.
   let importInputEl: HTMLInputElement | null = null;
   let importing = false;
   let importError = '';
+  let importOpen = false;
+  let importDragActive = false;
+
+  function openImport() {
+    importError = '';
+    importDragActive = false;
+    importOpen = true;
+  }
+
+  function closeImport() {
+    if (importing) return;
+    importOpen = false;
+    importError = '';
+    importDragActive = false;
+  }
 
   function triggerImport() {
+    openImport();
+  }
+
+  function pickImportFile() {
     importError = '';
     importInputEl?.click();
   }
 
-  async function onImportFile(e: Event) {
-    const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
+  async function importFromFile(file: File) {
     importing = true;
     importError = '';
     try {
@@ -980,13 +1000,41 @@
       runs = [persisted, ...runs];
       activeRunIdx = 0;
       view = 'results';
+      importOpen = false;
     } catch (err) {
       importError = String((err as any)?.message ?? err);
       console.error('ImportRun failed:', err);
     } finally {
       importing = false;
-      input.value = ''; // allow re-importing the same file
     }
+  }
+
+  async function onImportFile(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = ''; // allow re-importing the same file
+    if (!file) return;
+    await importFromFile(file);
+  }
+
+  function onImportDragOver(e: DragEvent) {
+    e.preventDefault();
+    if (importing) return;
+    importDragActive = true;
+  }
+
+  function onImportDragLeave(e: DragEvent) {
+    e.preventDefault();
+    importDragActive = false;
+  }
+
+  async function onImportDrop(e: DragEvent) {
+    e.preventDefault();
+    importDragActive = false;
+    if (importing) return;
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    await importFromFile(file);
   }
 
   function fmtRunTime(ts: number): string {
@@ -1445,10 +1493,15 @@
       }));
   $: displayIsLive = !activeRun;
   $: displayState  = activeRun ? 'done' : running ? 'running' : 'done';
+  $: displayIsImported = !!(activeRun && activeRun.config?.mode === 'imported');
   $: displayModeStr = activeRun
     ? activeRun.config.mode === 'curve'
       ? `curve · peak ${Math.max(0, ...(activeRun.config.curve ?? []).map((p) => p.users))}`
-      : `fixed ${activeRun.config.concurrency}`
+      : activeRun.config.mode === 'imported'
+        ? activeRun.config.concurrency > 0
+          ? `imported · ${activeRun.config.concurrency} rps`
+          : 'imported'
+        : `fixed ${activeRun.config.concurrency}`
     : mode === 'curve'
       ? `curve · peak ${Math.max(0, ...curvePoints.map((p) => p.users))}`
       : `fixed ${concurrency}`;
@@ -1978,16 +2031,6 @@
               Import
             </button>
           </div>
-          <input
-            type="file"
-            accept=".json,.ndjson,.txt,application/json,text/plain"
-            class="hidden-file-input"
-            bind:this={importInputEl}
-            on:change={onImportFile}
-          />
-          {#if importError}
-            <p class="import-error" role="alert">{importError}</p>
-          {/if}
           {#if runs.length === 0 && !running}
             <p class="empty">No runs yet. Start a load test, or <button type="button" class="link-btn" on:click={triggerImport}>import results</button> from k6 or vegeta.</p>
           {:else}
@@ -2717,6 +2760,9 @@
         {#if displayIsFlow}
           <span class="rcm-flow-badge hr-flow-badge">FLOW · {displayFlowStepCount}</span>
           <span class="hr-url" title={displayFlowName}>{displayFlowName}</span>
+        {:else if displayIsImported && !displayUrl}
+          <span class="rcm-flow-badge hr-flow-badge hr-import-badge">IMPORTED</span>
+          <span class="hr-url" title={activeRun?.name ?? ''}>{activeRun?.name ?? 'imported run'}</span>
         {:else}
           <span class="status-method method m-{displayMethod.toLowerCase()}">{displayMethod}</span>
           <span class="hr-url" title={displayUrl}>{displayUrl}</span>
@@ -2990,6 +3036,95 @@
     </div>
   {/if}
 
+  {#if importOpen}
+    <div class="modal-backdrop" on:click|self={closeImport} role="presentation">
+      <div class="modal import-modal" role="dialog" aria-modal="true" aria-label="Import results">
+        <div class="modal-head">
+          <h3 class="modal-title">Import results</h3>
+          <button class="modal-close" type="button" on:click={closeImport} title="Close" disabled={importing}>
+            <X size={14} weight="duotone" />
+          </button>
+        </div>
+        <div class="modal-body">
+          <p class="import-lede">
+            Drop a metrics JSON file produced by <strong>k6</strong> or <strong>vegeta</strong>. LoadCell will parse it and visualise the run with the same charts as a native test.
+          </p>
+
+          <div
+            class="import-dropzone"
+            class:active={importDragActive}
+            class:busy={importing}
+            on:dragover={onImportDragOver}
+            on:dragleave={onImportDragLeave}
+            on:drop={onImportDrop}
+            on:click={pickImportFile}
+            on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickImportFile(); } }}
+            role="button"
+            tabindex="0"
+            aria-label="Drop a results file or click to browse"
+          >
+            <div class="import-dz-icon" aria-hidden="true">
+              {#if importing}
+                <CircleNotch size={28} class="spin" />
+              {:else}
+                <UploadSimple size={28} weight="duotone" />
+              {/if}
+            </div>
+            <div class="import-dz-main">
+              {#if importing}
+                Importing…
+              {:else if importDragActive}
+                Release to import
+              {:else}
+                <strong>Drop file here</strong> or <span class="import-dz-link">click to browse</span>
+              {/if}
+            </div>
+            <div class="import-dz-hint">.json · .ndjson · max one file</div>
+          </div>
+
+          <input
+            type="file"
+            accept=".json,.ndjson,.txt,application/json,text/plain"
+            class="hidden-file-input"
+            bind:this={importInputEl}
+            on:change={onImportFile}
+          />
+
+          {#if importError}
+            <p class="import-error" role="alert">{importError}</p>
+          {/if}
+
+          <div class="import-formats">
+            <div class="import-format">
+              <div class="import-format-head">
+                <span class="import-format-name">k6</span>
+                <span class="import-format-hint">JSON metrics stream or summary export</span>
+              </div>
+              <pre class="import-format-cmd">k6 run --out json=out.json script.js</pre>
+              <p class="import-format-alt">
+                Or a summary file from <code>handleSummary()</code> / <code>--summary-export=summary.json</code>.
+              </p>
+            </div>
+            <div class="import-format">
+              <div class="import-format-head">
+                <span class="import-format-name">vegeta</span>
+                <span class="import-format-hint">per-request NDJSON (recommended)</span>
+              </div>
+              <pre class="import-format-cmd">vegeta attack -targets=t.txt -duration=30s &gt; r.bin
+vegeta encode -to=json r.bin &gt; r.json</pre>
+              <p class="import-format-alt">
+                Or a summary from <code>vegeta report -type=json</code> — flat timeline, no endpoint.
+              </p>
+            </div>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-ghost" type="button" on:click={closeImport} disabled={importing}>Close</button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
   {#if composeOpen}
     <div class="modal-backdrop" on:click|self={closeCompose} role="presentation">
       <div class="modal compose-modal" role="dialog" aria-modal="true" aria-label="Compose flow">
@@ -3243,7 +3378,7 @@
   .side-action {
     margin-left: auto;
     appearance: none;
-    background: transparent;
+    background: #fff;
     color: var(--muted);
     border: 1px solid var(--line-strong);
     padding: 3px 8px 3px 6px;
@@ -3275,10 +3410,143 @@
   }
   .import-error {
     color: #c0563b;
-    font-size: 11px;
-    margin: 6px 4px;
+    font-size: 12px;
+    margin: 0;
+    padding: 8px 10px;
     line-height: 1.5;
     word-break: break-word;
+    background: rgba(192, 86, 59, 0.08);
+    border: 1px solid rgba(192, 86, 59, 0.25);
+    border-radius: 4px;
+  }
+  /* ─── Import modal ────────────────────────────────────────────────── */
+  .import-modal {
+    width: min(640px, 92vw);
+  }
+  .import-lede {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--muted);
+  }
+  .import-lede strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .import-dropzone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 28px 18px;
+    border: 1.5px dashed var(--line-strong);
+    border-radius: 6px;
+    background: var(--inset);
+    color: var(--muted);
+    cursor: pointer;
+    text-align: center;
+    transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+    user-select: none;
+  }
+  .import-dropzone:hover:not(.busy),
+  .import-dropzone:focus-visible {
+    border-color: var(--accent);
+    color: var(--text);
+    outline: none;
+  }
+  .import-dropzone.active {
+    border-color: var(--accent-strong);
+    background: rgba(159, 184, 173, 0.14);
+    color: var(--text);
+  }
+  .import-dropzone.busy {
+    cursor: default;
+  }
+  .import-dz-icon {
+    color: var(--accent-strong);
+    display: inline-flex;
+  }
+  .import-dz-main {
+    font-size: 13.5px;
+    line-height: 1.4;
+  }
+  .import-dz-main strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .import-dz-link {
+    color: var(--accent-strong);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .import-dz-hint {
+    font-size: 11px;
+    color: var(--muted-2, var(--muted));
+    letter-spacing: 0.02em;
+  }
+  .import-formats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  @media (max-width: 620px) {
+    .import-formats {
+      grid-template-columns: 1fr;
+    }
+  }
+  .import-format {
+    padding: 12px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .import-format-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .import-format-name {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--text);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .import-format-hint {
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .import-format-cmd {
+    margin: 0;
+    padding: 8px 10px;
+    background: rgba(20, 30, 25, 0.06);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .import-format-alt {
+    margin: 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--muted);
+  }
+  .import-format-alt code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    padding: 1px 4px;
+    background: rgba(20, 30, 25, 0.06);
+    border-radius: 3px;
+    color: var(--text);
   }
   .link-btn {
     appearance: none;
@@ -5604,6 +5872,11 @@
     padding: 4px 10px;
     font-size: 10.5px;
   }
+  .hr-import-badge {
+    background: rgba(72, 89, 65, 0.12);
+    color: var(--muted);
+    border: 1px solid var(--line-strong);
+  }
   .hr-url {
     color: var(--text);
     font-family: "Lexend", ui-monospace, monospace;
@@ -5652,7 +5925,7 @@
     grid-template-columns: minmax(220px, 1.05fr) minmax(380px, 2fr) minmax(180px, 1fr);
     gap: 22px;
     padding: 18px 22px 20px;
-    background: var(--surface);
+    background: #fff;
     border: 1px solid var(--line);
     border-radius: 8px;
     align-items: stretch;

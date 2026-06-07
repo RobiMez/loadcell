@@ -313,17 +313,31 @@ func (k6Importer) parseSummary(data []byte) (model.SavedRun, error) {
 		Running:       false,
 	}
 
-	// Summary has no time-series: emit two flat samples so the chart renders a
-	// line at the aggregate level rather than nothing.
+	// Summary has no time-series. Spread the aggregate evenly across the
+	// duration so the chart renders as a constant strip rather than two
+	// bars at the edges.
 	dr := int(math.Max(1, math.Round(elapsed)))
-	history := []model.Sample{
-		{T: 0, TickRps: rate, TickRpsOk: rate * float64(success) / math.Max(1, float64(total)), P50: p50, P95: p95, P99: p99},
-		{T: float64(dr), TickRps: rate, TickRpsOk: rate * float64(success) / math.Max(1, float64(total)), P50: p50, P95: p95, P99: p99},
+	okRate := rate * float64(success) / math.Max(1, float64(total))
+	conc := int(math.Round(rate))
+	if conc < 1 {
+		conc = 1
+	}
+	history := make([]model.Sample, 0, dr+1)
+	for t := 0; t <= dr; t++ {
+		history = append(history, model.Sample{
+			T:         float64(t),
+			TickRps:   rate,
+			TickRpsOk: okRate,
+			P50:       p50,
+			P95:       p95,
+			P99:       p99,
+			Conc:      conc,
+		})
 	}
 
 	return model.SavedRun{
 		Name:    "k6 import (summary)",
-		Config:  model.RunConfig{Mode: "imported", DurationSecs: dr},
+		Config:  model.RunConfig{Mode: "imported", Concurrency: conc, DurationSecs: dr},
 		Metrics: metrics,
 		History: history,
 	}, nil
