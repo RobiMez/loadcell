@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"loadcell/engine"
+	"loadcell/importers"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -81,6 +82,18 @@ func (a *App) ListRuns() ([]SavedRun, error) {
 // SaveRun persists a completed run and returns it with id/startedAt filled.
 func (a *App) SaveRun(r SavedRun) (SavedRun, error) {
 	return a.runs.Save(r)
+}
+
+// ImportRun parses load-test results produced by an external tool (k6,
+// vegeta, ...), persists the resulting run, and returns it. name is used as a
+// fallback display name (typically the source filename). The format is
+// auto-detected from contents.
+func (a *App) ImportRun(name string, contents string) (SavedRun, error) {
+	run, err := importers.ImportRun(name, []byte(contents))
+	if err != nil {
+		return SavedRun{}, err
+	}
+	return a.runs.Save(run)
 }
 
 // DeleteRun removes a persisted run by ID.

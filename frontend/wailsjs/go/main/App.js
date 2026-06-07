@@ -14,6 +14,10 @@ export function DeleteRun(arg1) {
   return window['go']['main']['App']['DeleteRun'](arg1);
 }
 
+export function ImportRun(arg1, arg2) {
+  return window['go']['main']['App']['ImportRun'](arg1, arg2);
+}
+
 export function ListFlows() {
   return window['go']['main']['App']['ListFlows']();
 }
