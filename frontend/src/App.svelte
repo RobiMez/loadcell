@@ -16,7 +16,6 @@
     CircleNotch,
     Check,
     DownloadSimple,
-    UploadSimple,
   } from 'phosphor-svelte';
   import {
     StartTest,
@@ -27,74 +26,29 @@
     ListRuns,
     SaveRun,
     DeleteRun,
-    ImportRun,
     SendSample,
     ListFlows,
-    SaveFlow,
     DeleteFlow,
   } from '../wailsjs/go/main/App.js';
-  import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime.js';
+  import { EventsOn } from '../wailsjs/runtime/runtime.js';
   import { engine, main } from '../wailsjs/go/models';
   import NumberFlow from './NumberFlow.svelte';
+  import ImportModal from './components/ImportModal.svelte';
+  import ComposeModal from './components/ComposeModal.svelte';
+  import InfoSheet from './components/InfoSheet.svelte';
   import logoUrl from './assets/images/loadcell.png';
-
-  type Metrics = {
-    elapsedSecs: number;
-    totalRequests: number;
-    successful: number;
-    clientErrors: number;
-    rateLimited: number;
-    serverErrors: number;
-    networkErrors: number;
-    errors: number;
-    rps: number;
-    errorRate: number;
-    p50Ms: number;
-    p95Ms: number;
-    p99Ms: number;
-    currentConcurrency: number;
-    running: boolean;
-  };
-
-  type Sample = {
-    t: number;
-    tickRps: number;
-    tickRpsOk: number;
-    p50: number;
-    p95: number;
-    p99: number;
-    conc: number;
-  };
-
-  type FlowRunStep = { name: string; method: string; url: string };
-
-  type RunConfig = {
-    mode: 'constant' | 'curve';
-    concurrency: number;
-    durationSecs: number;
-    curve?: CurvePt[];
-    noise?: number;
-    // Populated only when the run was a compound flow. Single-request
-    // runs leave these undefined.
-    flowId?: string;
-    flowName?: string;
-    steps?: FlowRunStep[];
-  };
-
-  type Run = {
-    id: string;
-    startedAt: number;          // ms epoch
-    name: string;
-    method: string;
-    url: string;
-    config: RunConfig;
-    metrics: Metrics;
-    history: Sample[];
-  };
-
-  type HeaderRow = { key: string; value: string };
-
-  const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const;
+  import type {
+    Metrics,
+    Sample,
+    FlowRunStep,
+    RunConfig,
+    Run,
+    HeaderRow,
+    SavedFlowT,
+    CurveType,
+    CurvePt,
+  } from './types';
+  import { METHODS } from './types';
 
   // Custom method dropdown — native <select> opens a system popup that
   // WKWebView renders modally, which makes the UI hard to drive via
@@ -114,8 +68,6 @@
   }
   function handleDocKey(e: KeyboardEvent) {
     if (methodOpen && e.key === 'Escape') methodOpen = false;
-    if (infoOpen && e.key === 'Escape') infoOpen = false;
-    if (importOpen && e.key === 'Escape') closeImport();
   }
 
   // ─── Request-builder state ───────────────────────────────────────────
@@ -133,13 +85,6 @@
   // Compound flows. SavedFlow is an ordered list of SavedRequest IDs;
   // activeFlow being non-null switches the loadtest pane into flow mode
   // (StartTest receives a Steps array instead of single URL/method/etc).
-  type SavedFlowT = {
-    id: string;
-    name: string;
-    stepIds: string[];
-    createdAt: string;
-    updatedAt: string;
-  };
   let flows: SavedFlowT[] = [];
   let activeFlow: SavedFlowT | null = null;
   // Resolved SavedRequest objects for activeFlow.stepIds, in order. Computed
@@ -150,12 +95,21 @@
         .filter((r): r is main.SavedRequest => !!r))
     : [];
 
-  // Compose modal state. composeEditingId="" means "creating new", otherwise
-  // an edit of an existing flow.
+  // Compose modal — the modal owns its own form state. We just track which
+  // flow (if any) is being edited and a single open/closed boolean.
   let composeOpen = false;
-  let composeEditingId = '';
-  let composeName = '';
-  let composeStepIds: string[] = [];
+  let composeSeed: SavedFlowT | null = null;
+
+  function openCompose(f?: SavedFlowT) {
+    composeSeed = f ?? null;
+    composeOpen = true;
+  }
+
+  async function onFlowSaved(saved: SavedFlowT) {
+    await refreshFlows();
+    const fresh = flows.find((f) => f.id === saved.id);
+    if (fresh) selectFlow(fresh);
+  }
 
   // Sample-send state — null until the first Send. While `sending` is true
   // the Send button shows a spinner and the existing response (if any) stays
@@ -397,8 +351,6 @@
   }
 
   // ─── Load-profile state ──────────────────────────────────────────────
-  type CurveType = 'linear' | 'exponential' | 'step';
-  type CurvePt = { timeSecs: number; users: number; curveIn: CurveType; exponent: number };
 
   // Ceiling on concurrent workers — clamps the editor + protects the engine
   // from spawning thousands of goroutines by accident. User-settable from
@@ -877,12 +829,13 @@
   type View = 'request' | 'loadtest' | 'results';
   let view: View = 'request';
 
-  // Info sheet — opened by clicking the brand mark in the topnav.
+  // Info sheet — opened by clicking the brand mark in the topnav. The
+  // component owns its own Escape handling, BrowserOpenURL calls, and
+  // markup; we just toggle `infoOpen` and let two-way binding push
+  // MAX_WORKERS edits back here so the reactive persistence below picks
+  // them up.
   let infoOpen = false;
   function openInfo() { infoOpen = true; }
-  function closeInfo() { infoOpen = false; }
-  function openRobiWork() { BrowserOpenURL('https://robi.work'); }
-  function openSponsor() { BrowserOpenURL('https://github.com/sponsors/RobiMez'); }
 
   function snapshotRun(m: Metrics) {
     if (history.length === 0) return;
@@ -959,82 +912,19 @@
     }
   }
 
-  // Import — parse a result file produced by an external load-testing tool
-  // (k6, vegeta, ...) into a SavedRun and surface it like a native run. The
-  // user picks a file through a modal with format instructions and a
-  // drag-and-drop zone; the underlying flow then mirrors any other run.
-  let importInputEl: HTMLInputElement | null = null;
-  let importing = false;
-  let importError = '';
+  // Import — the modal owns its own picker, drag state, and ImportRun call.
+  // The parent only tracks `open` so the sidebar buttons can toggle it, and
+  // receives the persisted run back through `onImported`.
   let importOpen = false;
-  let importDragActive = false;
 
-  function openImport() {
-    importError = '';
-    importDragActive = false;
+  function triggerImport() {
     importOpen = true;
   }
 
-  function closeImport() {
-    if (importing) return;
-    importOpen = false;
-    importError = '';
-    importDragActive = false;
-  }
-
-  function triggerImport() {
-    openImport();
-  }
-
-  function pickImportFile() {
-    importError = '';
-    importInputEl?.click();
-  }
-
-  async function importFromFile(file: File) {
-    importing = true;
-    importError = '';
-    try {
-      const text = await file.text();
-      const persisted = (await ImportRun(file.name, text)) as unknown as Run;
-      runs = [persisted, ...runs];
-      activeRunIdx = 0;
-      view = 'results';
-      importOpen = false;
-    } catch (err) {
-      importError = String((err as any)?.message ?? err);
-      console.error('ImportRun failed:', err);
-    } finally {
-      importing = false;
-    }
-  }
-
-  async function onImportFile(e: Event) {
-    const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = ''; // allow re-importing the same file
-    if (!file) return;
-    await importFromFile(file);
-  }
-
-  function onImportDragOver(e: DragEvent) {
-    e.preventDefault();
-    if (importing) return;
-    importDragActive = true;
-  }
-
-  function onImportDragLeave(e: DragEvent) {
-    e.preventDefault();
-    importDragActive = false;
-  }
-
-  async function onImportDrop(e: DragEvent) {
-    e.preventDefault();
-    importDragActive = false;
-    if (importing) return;
-    const file = e.dataTransfer?.files?.[0];
-    if (!file) return;
-    await importFromFile(file);
+  function onImported(persisted: Run) {
+    runs = [persisted, ...runs];
+    activeRunIdx = 0;
+    view = 'results';
   }
 
   function fmtRunTime(ts: number): string {
@@ -1278,63 +1168,8 @@
     }
   }
 
-  // ─── Compose modal ───────────────────────────────────────────────
-  function openCompose(f?: SavedFlowT) {
-    composeEditingId = f?.id || '';
-    composeName = f?.name || '';
-    composeStepIds = f ? [...f.stepIds] : [];
-    composeOpen = true;
-  }
-
-  function closeCompose() {
-    composeOpen = false;
-    composeEditingId = '';
-    composeName = '';
-    composeStepIds = [];
-  }
-
-  function composeAddStep(reqId: string) {
-    composeStepIds = [...composeStepIds, reqId];
-  }
-
-  function composeRemoveStep(idx: number) {
-    composeStepIds = composeStepIds.filter((_, i) => i !== idx);
-  }
-
-  function composeMoveStep(idx: number, dir: -1 | 1) {
-    const next = idx + dir;
-    if (next < 0 || next >= composeStepIds.length) return;
-    const copy = [...composeStepIds];
-    [copy[idx], copy[next]] = [copy[next], copy[idx]];
-    composeStepIds = copy;
-  }
-
-  async function saveCompose() {
-    const name = composeName.trim();
-    if (!name) return;
-    if (composeStepIds.length === 0) return;
-    try {
-      const saved = await SaveFlow({
-        id: composeEditingId,
-        name,
-        stepIds: composeStepIds,
-        createdAt: '',
-        updatedAt: '',
-      } as any);
-      await refreshFlows();
-      // Open the (new or just-edited) flow so the user sees the result.
-      const fresh = flows.find((f) => f.id === (saved as any).id);
-      if (fresh) selectFlow(fresh);
-      closeCompose();
-    } catch (e: any) {
-      console.error('Save flow failed:', e);
-    }
-  }
-
-  // composeAvailable: saved requests not yet in the step list. Same
-  // request can appear in the steps list multiple times (e.g. fetch
-  // → update → fetch again), so we don't filter out used IDs.
-  $: composeAvailable = requests;
+  // Compose handlers (openCompose, onFlowSaved) sit above next to their
+  // state declarations; the modal itself owns the form lifecycle.
 
   let flashTimer: any = null;
   function flashSaved(msg: string) {
@@ -2020,14 +1855,9 @@
               class="side-action"
               type="button"
               on:click={triggerImport}
-              disabled={importing}
               title="Import results from k6, vegeta, …"
             >
-              {#if importing}
-                <CircleNotch size={12} class="spin" />
-              {:else}
-                <DownloadSimple size={12} />
-              {/if}
+              <DownloadSimple size={12} />
               Import
             </button>
           </div>
@@ -2955,265 +2785,20 @@
     {/if}
   </div>
 
-  {#if infoOpen}
-    <div
-      class="info-backdrop"
-      role="presentation"
-      on:click={closeInfo}
-    >
-      <div
-        class="info-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="info-title"
-        on:click|stopPropagation
-      >
-        <button
-          type="button"
-          class="info-close"
-          on:click={closeInfo}
-          aria-label="Close"
-        >
-          <X size={14} weight="duotone" />
-        </button>
-
-        <div class="info-mark" aria-hidden="true">
-          <img src={logoUrl} alt="" />
-        </div>
-        <h2 id="info-title" class="info-title">LoadCell</h2>
-        <p class="info-subtitle">A desktop load tester for HTTP APIs.</p>
-
-        <p class="info-body">
-          Build requests, sketch a load profile, fire a test, then see throughput,
-          latency percentiles, and per-status breakdowns over time. Runs are
-          saved locally so you can switch between past tests.
-        </p>
-
-        <div class="info-setting">
-          <label class="info-setting-label" for="info-max-workers">
-            Max concurrency
-            <span class="info-setting-hint">workers cap (default 500)</span>
-          </label>
-          <input
-            id="info-max-workers"
-            class="info-setting-input"
-            type="number"
-            min={MAX_WORKERS_FLOOR}
-            max={MAX_WORKERS_CEIL}
-            step="50"
-            bind:value={MAX_WORKERS}
-            disabled={running}
-          />
-          {#if MAX_WORKERS > 2000}
-            <p class="info-warn" role="alert">
-              <strong>Above 2000.</strong> If your laptop melts or starts crying
-             or your kernel panics, know that you brought it on yourself lol :) .
-            </p>
-          {/if}
-        </div>
-
-        <button
-          type="button"
-          class="info-link"
-          on:click={openRobiWork}
-          title="Open robi.work"
-        >
-          Built by Robi · robi.work →
-        </button>
-
-        <button
-          type="button"
-          class="info-sponsor"
-          on:click={openSponsor}
-          title="Sponsor on GitHub"
-        >
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
-            <path d="M12 21s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 5.65-7 10-7 10Z" />
-          </svg>
-          Sponsor on GitHub
-        </button>
-      </div>
-    </div>
-  {/if}
-
-  {#if importOpen}
-    <div class="modal-backdrop" on:click|self={closeImport} role="presentation">
-      <div class="modal import-modal" role="dialog" aria-modal="true" aria-label="Import results">
-        <div class="modal-head">
-          <h3 class="modal-title">Import results</h3>
-          <button class="modal-close" type="button" on:click={closeImport} title="Close" disabled={importing}>
-            <X size={14} weight="duotone" />
-          </button>
-        </div>
-        <div class="modal-body">
-          <p class="import-lede">
-            Drop a metrics JSON file produced by <strong>k6</strong> or <strong>vegeta</strong>. LoadCell will parse it and visualise the run with the same charts as a native test.
-          </p>
-
-          <div
-            class="import-dropzone"
-            class:active={importDragActive}
-            class:busy={importing}
-            on:dragover={onImportDragOver}
-            on:dragleave={onImportDragLeave}
-            on:drop={onImportDrop}
-            on:click={pickImportFile}
-            on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickImportFile(); } }}
-            role="button"
-            tabindex="0"
-            aria-label="Drop a results file or click to browse"
-          >
-            <div class="import-dz-icon" aria-hidden="true">
-              {#if importing}
-                <CircleNotch size={28} class="spin" />
-              {:else}
-                <UploadSimple size={28} weight="duotone" />
-              {/if}
-            </div>
-            <div class="import-dz-main">
-              {#if importing}
-                Importing…
-              {:else if importDragActive}
-                Release to import
-              {:else}
-                <strong>Drop file here</strong> or <span class="import-dz-link">click to browse</span>
-              {/if}
-            </div>
-            <div class="import-dz-hint">.json · .ndjson · max one file</div>
-          </div>
-
-          <input
-            type="file"
-            accept=".json,.ndjson,.txt,application/json,text/plain"
-            class="hidden-file-input"
-            bind:this={importInputEl}
-            on:change={onImportFile}
-          />
-
-          {#if importError}
-            <p class="import-error" role="alert">{importError}</p>
-          {/if}
-
-          <div class="import-formats">
-            <div class="import-format">
-              <div class="import-format-head">
-                <span class="import-format-name">k6</span>
-                <span class="import-format-hint">JSON metrics stream or summary export</span>
-              </div>
-              <pre class="import-format-cmd">k6 run --out json=out.json script.js</pre>
-              <p class="import-format-alt">
-                Or a summary file from <code>handleSummary()</code> / <code>--summary-export=summary.json</code>.
-              </p>
-            </div>
-            <div class="import-format">
-              <div class="import-format-head">
-                <span class="import-format-name">vegeta</span>
-                <span class="import-format-hint">per-request NDJSON (recommended)</span>
-              </div>
-              <pre class="import-format-cmd">vegeta attack -targets=t.txt -duration=30s &gt; r.bin
-vegeta encode -to=json r.bin &gt; r.json</pre>
-              <p class="import-format-alt">
-                Or a summary from <code>vegeta report -type=json</code> — flat timeline, no endpoint.
-              </p>
-            </div>
-          </div>
-        </div>
-        <div class="modal-foot">
-          <button class="btn btn-ghost" type="button" on:click={closeImport} disabled={importing}>Close</button>
-        </div>
-      </div>
-    </div>
-  {/if}
-
-  {#if composeOpen}
-    <div class="modal-backdrop" on:click|self={closeCompose} role="presentation">
-      <div class="modal compose-modal" role="dialog" aria-modal="true" aria-label="Compose flow">
-        <div class="modal-head">
-          <h3 class="modal-title">{composeEditingId ? 'Edit flow' : 'New flow'}</h3>
-          <button class="modal-close" type="button" on:click={closeCompose} title="Close">
-            <X size={14} weight="duotone" />
-          </button>
-        </div>
-        <div class="modal-body">
-          <label class="compose-name">
-            <span class="k">Name</span>
-            <input
-              type="text"
-              bind:value={composeName}
-              placeholder="e.g. checkout-journey"
-              spellcheck="false"
-            />
-          </label>
-          <div class="compose-panes">
-            <div class="compose-pane">
-              <div class="compose-pane-head">
-                <span class="compose-pane-title">Saved requests</span>
-                <span class="compose-pane-hint">click to add →</span>
-              </div>
-              {#if composeAvailable.length === 0}
-                <p class="compose-empty">No saved requests yet.</p>
-              {:else}
-                <ul class="compose-avail">
-                  {#each composeAvailable as r (r.id)}
-                    <li>
-                      <button class="compose-avail-row" type="button" on:click={() => composeAddStep(r.id)}>
-                        <span class="method m-{r.method.toLowerCase()}">{r.method}</span>
-                        <span class="compose-avail-name">{r.name || 'Untitled'}</span>
-                      </button>
-                    </li>
-                  {/each}
-                </ul>
-              {/if}
-            </div>
-            <div class="compose-pane">
-              <div class="compose-pane-head">
-                <span class="compose-pane-title">Steps in order</span>
-                <span class="compose-pane-hint">{composeStepIds.length} step{composeStepIds.length === 1 ? '' : 's'}</span>
-              </div>
-              {#if composeStepIds.length === 0}
-                <p class="compose-empty">Pick requests on the left to build a flow.</p>
-              {:else}
-                <ol class="compose-steps">
-                  {#each composeStepIds as sid, i (i + ':' + sid)}
-                    {@const r = requests.find((x) => x.id === sid)}
-                    <li>
-                      <span class="compose-step-num">{i + 1}</span>
-                      {#if r}
-                        <span class="method m-{r.method.toLowerCase()}">{r.method}</span>
-                        <span class="compose-step-name">{r.name || 'Untitled'}</span>
-                      {:else}
-                        <span class="method m-deleted">DEL</span>
-                        <span class="compose-step-name compose-step-missing">deleted request</span>
-                      {/if}
-                      <div class="compose-step-actions">
-                        <button type="button" on:click={() => composeMoveStep(i, -1)} disabled={i === 0} title="Move up" aria-label="Move up">↑</button>
-                        <button type="button" on:click={() => composeMoveStep(i, 1)} disabled={i === composeStepIds.length - 1} title="Move down" aria-label="Move down">↓</button>
-                        <button type="button" on:click={() => composeRemoveStep(i)} title="Remove" aria-label="Remove">
-                          <X size={11} weight="duotone" />
-                        </button>
-                      </div>
-                    </li>
-                  {/each}
-                </ol>
-              {/if}
-            </div>
-          </div>
-          <p class="compose-note">
-            <strong>How flows run:</strong> Each worker fires step 1 → 2 → … → N in order, then loops. Workers are independent, so different workers may be on different steps at the same moment — no barrier between steps. Good for modeling real user journeys; not for "everyone fire step 1, then everyone fire step 2".
-          </p>
-        </div>
-        <div class="modal-foot">
-          <button class="btn btn-ghost" type="button" on:click={closeCompose}>Cancel</button>
-          <button
-            class="btn btn-primary"
-            type="button"
-            on:click={saveCompose}
-            disabled={!composeName.trim() || composeStepIds.length === 0}
-          >Save flow</button>
-        </div>
-      </div>
-    </div>
-  {/if}
+  <InfoSheet
+    bind:open={infoOpen}
+    bind:maxWorkers={MAX_WORKERS}
+    maxWorkersFloor={MAX_WORKERS_FLOOR}
+    maxWorkersCeil={MAX_WORKERS_CEIL}
+    {running}
+  />
+  <ImportModal bind:open={importOpen} {onImported} />
+  <ComposeModal
+    bind:open={composeOpen}
+    {requests}
+    seed={composeSeed}
+    onSaved={onFlowSaved}
+  />
 </main>
 
 <style>
@@ -3400,153 +2985,6 @@ vegeta encode -to=json r.bin &gt; r.json</pre>
   .side-action:disabled {
     opacity: 0.5;
     cursor: default;
-  }
-  .hidden-file-input {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-    pointer-events: none;
-  }
-  .import-error {
-    color: #c0563b;
-    font-size: 12px;
-    margin: 0;
-    padding: 8px 10px;
-    line-height: 1.5;
-    word-break: break-word;
-    background: rgba(192, 86, 59, 0.08);
-    border: 1px solid rgba(192, 86, 59, 0.25);
-    border-radius: 4px;
-  }
-  /* ─── Import modal ────────────────────────────────────────────────── */
-  .import-modal {
-    width: min(640px, 92vw);
-  }
-  .import-lede {
-    margin: 0;
-    font-size: 13px;
-    line-height: 1.55;
-    color: var(--muted);
-  }
-  .import-lede strong {
-    color: var(--text);
-    font-weight: 600;
-  }
-  .import-dropzone {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 28px 18px;
-    border: 1.5px dashed var(--line-strong);
-    border-radius: 6px;
-    background: var(--inset);
-    color: var(--muted);
-    cursor: pointer;
-    text-align: center;
-    transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
-    user-select: none;
-  }
-  .import-dropzone:hover:not(.busy),
-  .import-dropzone:focus-visible {
-    border-color: var(--accent);
-    color: var(--text);
-    outline: none;
-  }
-  .import-dropzone.active {
-    border-color: var(--accent-strong);
-    background: rgba(159, 184, 173, 0.14);
-    color: var(--text);
-  }
-  .import-dropzone.busy {
-    cursor: default;
-  }
-  .import-dz-icon {
-    color: var(--accent-strong);
-    display: inline-flex;
-  }
-  .import-dz-main {
-    font-size: 13.5px;
-    line-height: 1.4;
-  }
-  .import-dz-main strong {
-    color: var(--text);
-    font-weight: 600;
-  }
-  .import-dz-link {
-    color: var(--accent-strong);
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  }
-  .import-dz-hint {
-    font-size: 11px;
-    color: var(--muted-2, var(--muted));
-    letter-spacing: 0.02em;
-  }
-  .import-formats {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  }
-  @media (max-width: 620px) {
-    .import-formats {
-      grid-template-columns: 1fr;
-    }
-  }
-  .import-format {
-    padding: 12px;
-    background: var(--inset);
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .import-format-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .import-format-name {
-    font-size: 12.5px;
-    font-weight: 700;
-    color: var(--text);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .import-format-hint {
-    font-size: 11px;
-    color: var(--muted);
-  }
-  .import-format-cmd {
-    margin: 0;
-    padding: 8px 10px;
-    background: rgba(20, 30, 25, 0.06);
-    border: 1px solid var(--line);
-    border-radius: 3px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11.5px;
-    line-height: 1.5;
-    color: var(--text);
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .import-format-alt {
-    margin: 0;
-    font-size: 11.5px;
-    line-height: 1.5;
-    color: var(--muted);
-  }
-  .import-format-alt code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11px;
-    padding: 1px 4px;
-    background: rgba(20, 30, 25, 0.06);
-    border-radius: 3px;
-    color: var(--text);
   }
   .link-btn {
     appearance: none;
@@ -3939,27 +3377,9 @@ vegeta encode -to=json r.bin &gt; r.json</pre>
     background: rgba(120, 50, 50, 0.10);
   }
 
-  /* ─── Method badges (shared across sidebar + selects + metrics) ──── */
-  .method {
-    display: inline-block;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    padding: 3px 7px;
-    border-radius: 3px;
-    font-family: "Lexend", ui-monospace, "SF Mono", Menlo, monospace;
-    font-variant-numeric: tabular-nums;
-    min-width: 46px;
-    text-align: center;
-    flex-shrink: 0;
-  }
-  .m-get     { background: rgba(159, 184, 173, 0.30); color: #2d4538; }
-  .m-post    { background: rgba(72, 89, 65, 0.88);    color: #ffffff; }
-  .m-put     { background: rgba(138, 114, 54, 0.22);  color: #5a4a26; }
-  .m-patch   { background: rgba(138, 114, 54, 0.22);  color: #5a4a26; }
-  .m-delete  { background: rgba(120, 50, 50, 0.18);   color: #4a2020; }
-  .m-head    { background: rgba(72, 89, 65, 0.10);    color: var(--muted); }
-  .m-options { background: rgba(72, 89, 65, 0.10);    color: var(--muted); }
+  /* Method badge base styles (.method, .m-*) live in style.css as a global
+     primitive. Context-specific overrides (e.g. .run-header .method) stay
+     here since they need the App-level selector to scope. */
 
   /* ─── Builder ─────────────────────────────────────────────────── */
   .builder {
@@ -4157,263 +3577,6 @@ vegeta encode -to=json r.bin &gt; r.json</pre>
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
-  }
-
-  /* ─── Compose modal ──────────────────────────────────────────────── */
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(20, 30, 25, 0.45);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
-    backdrop-filter: blur(2px);
-  }
-  .modal {
-    background: var(--bg, #fff);
-    border: 1px solid var(--line-strong);
-    border-radius: 8px;
-    box-shadow: 0 20px 50px rgba(20, 30, 25, 0.2);
-    width: min(880px, 92vw);
-    max-height: 86vh;
-    display: flex;
-    flex-direction: column;
-  }
-  .modal-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 18px;
-    border-bottom: 1px solid var(--line);
-  }
-  .modal-title {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .modal-close {
-    appearance: none;
-    background: transparent;
-    border: none;
-    color: var(--muted);
-    padding: 4px;
-    cursor: pointer;
-    border-radius: 3px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .modal-close:hover {
-    color: var(--text);
-    background: rgba(72, 89, 65, 0.08);
-  }
-  .modal-body {
-    padding: 18px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  .modal-foot {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: 12px 18px;
-    border-top: 1px solid var(--line);
-  }
-  .compose-name {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .compose-name .k {
-    font-size: 11px;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .compose-name input {
-    height: 34px;
-    padding: 0 10px;
-    background: var(--inset);
-    color: var(--text);
-    border: 1px solid var(--line-strong);
-    border-radius: 4px;
-    font: inherit;
-    font-size: 13px;
-  }
-  .compose-name input:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(159, 184, 173, 0.15);
-  }
-  .compose-note {
-    margin: 0;
-    padding: 10px 12px;
-    background: var(--inset);
-    border: 1px solid var(--line);
-    border-left: 3px solid rgba(72, 89, 65, 0.35);
-    border-radius: 4px;
-    font-size: 11.5px;
-    line-height: 1.55;
-    color: var(--muted);
-  }
-  .compose-note strong {
-    color: var(--text);
-    font-weight: 600;
-  }
-  .compose-panes {
-    display: grid;
-    grid-template-columns: 1fr 1.1fr;
-    gap: 12px;
-    min-height: 320px;
-  }
-  .compose-pane {
-    background: var(--inset);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-  }
-  .compose-pane-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--line);
-  }
-  .compose-pane-title {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--muted);
-  }
-  .compose-pane-hint {
-    font-size: 11px;
-    color: var(--muted);
-    opacity: 0.7;
-  }
-  .compose-empty {
-    margin: 0;
-    padding: 16px 12px;
-    font-size: 12px;
-    color: var(--muted);
-    text-align: center;
-  }
-  .compose-avail {
-    list-style: none;
-    margin: 0;
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    overflow-y: auto;
-    flex: 1;
-  }
-  .compose-avail-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 7px 10px;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    color: var(--text);
-    font: inherit;
-    font-size: 13px;
-    text-align: left;
-    cursor: pointer;
-    transition: background 120ms;
-  }
-  .compose-avail-row:hover {
-    background: rgba(72, 89, 65, 0.10);
-  }
-  .compose-avail-name {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .compose-steps {
-    list-style: none;
-    margin: 0;
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    overflow-y: auto;
-    flex: 1;
-  }
-  .compose-steps li {
-    display: grid;
-    grid-template-columns: 22px auto 1fr auto;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
-    background: rgba(255, 255, 255, 0.7);
-    border: 1px solid var(--line);
-    border-radius: 4px;
-  }
-  .compose-step-num {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 20px;
-    height: 20px;
-    padding: 0 5px;
-    background: var(--inset);
-    border: 1px solid var(--line);
-    border-radius: 3px;
-    font-size: 10.5px;
-    font-weight: 600;
-    color: var(--accent-strong);
-    font-variant-numeric: tabular-nums;
-  }
-  .compose-step-name {
-    font-size: 12.5px;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .compose-step-missing {
-    color: var(--err);
-    font-style: italic;
-  }
-  .compose-step-actions {
-    display: flex;
-    gap: 2px;
-  }
-  .compose-step-actions button {
-    appearance: none;
-    background: transparent;
-    border: 1px solid transparent;
-    color: var(--muted);
-    width: 22px;
-    height: 22px;
-    border-radius: 3px;
-    cursor: pointer;
-    font-size: 12px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .compose-step-actions button:hover:not(:disabled) {
-    background: rgba(72, 89, 65, 0.10);
-    border-color: rgba(72, 89, 65, 0.18);
-    color: var(--text);
-  }
-  .compose-step-actions button:disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
-  }
-  .compose-step-actions button:last-child:hover:not(:disabled) {
-    background: rgba(120, 50, 50, 0.10);
-    border-color: rgba(120, 50, 50, 0.20);
-    color: var(--err);
   }
 
   .results-pane {
@@ -5409,53 +4572,9 @@ vegeta encode -to=json r.bin &gt; r.json</pre>
     gap: 6px;
     margin-top: 4px;
   }
-  .btn {
-    height: 36px;
-    padding: 0 16px;
-    border: 1px solid var(--line-strong);
-    background: var(--surface-2);
-    color: var(--text);
-    border-radius: 4px;
-    cursor: pointer;
-    font: inherit;
-    font-size: 13px;
-    font-weight: 500;
-    transition: all 140ms;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 7px;
-  }
-  .btn:hover:not(:disabled) {
-    background: rgba(72, 89, 65, 0.08);
-    border-color: rgba(72, 89, 65, 0.30);
-  }
-  .btn:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-  }
-  .btn-ghost {
-    padding: 0 12px;
-    font-size: 12px;
-    background: #fff;
-  }
-  .btn-primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #ffffff;
-    font-weight: 600;
-  }
-  .btn-primary:hover:not(:disabled) {
-    background: var(--accent-strong);
-    border-color: var(--accent-strong);
-  }
-  .btn-spin {
-    display: inline-flex;
-    animation: lc-spin 0.9s linear infinite;
-  }
-  @keyframes lc-spin {
-    to { transform: rotate(360deg); }
-  }
+  /* Button primitives (.btn, .btn-ghost, .btn-primary, .btn-spin) live in
+     style.css for the same reason as the modal shell — shared, used from
+     every view component. */
 
   /* ─── Sample response panel ─────────────────────────────────────── */
   .section-sep {
@@ -6423,200 +5542,6 @@ vegeta encode -to=json r.bin &gt; r.json</pre>
     letter-spacing: 0.06em;
   }
 
-  /* ─── Info sheet (logo-click modal) ─────────────────────────────── */
-  .info-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 1000;
-    background: rgba(31, 42, 29, 0.42);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 32px;
-    animation: lc-fade-in 140ms ease-out;
-  }
-  .info-sheet {
-    position: relative;
-    width: min(440px, 100%);
-    background: var(--bg);
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    padding: 28px 28px 24px;
-    box-shadow: 0 24px 64px rgba(31, 42, 29, 0.18);
-    text-align: center;
-    animation: lc-pop-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1);
-  }
-  .info-close {
-    position: absolute;
-    top: 12px;
-    right: 12px;
-    appearance: none;
-    background: transparent;
-    border: 1px solid transparent;
-    color: var(--muted);
-    cursor: pointer;
-    padding: 6px;
-    border-radius: 4px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 120ms;
-  }
-  .info-close:hover {
-    color: var(--text);
-    border-color: var(--line);
-    background: var(--surface);
-  }
-  .info-mark {
-    width: 72px;
-    height: 72px;
-    margin: 0 auto 14px;
-    border-radius: 16px;
-    background: var(--inset);
-    border: 1px solid var(--line);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .info-mark img {
-    width: 46px;
-    height: 46px;
-    object-fit: contain;
-  }
-  .info-title {
-    margin: 0 0 4px;
-    font-size: 20px;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    color: var(--text);
-  }
-  .info-subtitle {
-    margin: 0 0 14px;
-    color: var(--muted);
-    font-size: 13px;
-  }
-  .info-body {
-    margin: 0 0 20px;
-    color: var(--text);
-    font-size: 13px;
-    line-height: 1.6;
-    text-align: left;
-    padding: 12px 14px;
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-  }
-  .info-setting {
-    margin: 0 0 18px;
-    padding: 12px 14px;
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    text-align: left;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .info-setting-label {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text);
-  }
-  .info-setting-hint {
-    color: var(--muted);
-    font-size: 10px;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-  .info-setting-input {
-    appearance: none;
-    width: 100%;
-    padding: 8px 10px;
-    background: var(--inset);
-    color: var(--text);
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    font: inherit;
-    font-size: 13px;
-    font-variant-numeric: tabular-nums;
-    box-sizing: border-box;
-  }
-  .info-setting-input:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 2px rgba(159, 184, 173, 0.15);
-  }
-  .info-warn {
-    margin: 0;
-    padding: 8px 10px;
-    background: rgba(138, 94, 54, 0.10);
-    border: 1px solid rgba(138, 94, 54, 0.40);
-    border-radius: 4px;
-    color: #5a3a1f;
-    font-size: 11px;
-    line-height: 1.5;
-  }
-  .info-warn strong {
-    color: var(--err);
-    font-weight: 700;
-  }
-  .info-link {
-    appearance: none;
-    background: var(--accent);
-    color: #ffffff;
-    border: 1px solid var(--accent);
-    font: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    padding: 9px 18px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: background 120ms, border-color 120ms;
-  }
-  .info-link:hover {
-    background: var(--accent-strong);
-    border-color: var(--accent-strong);
-  }
-  .info-sponsor {
-    appearance: none;
-    background: transparent;
-    color: var(--text);
-    border: 1px solid var(--line-strong);
-    font: inherit;
-    font-size: 12px;
-    font-weight: 500;
-    padding: 8px 16px;
-    border-radius: 6px;
-    cursor: pointer;
-    margin-top: 8px;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    transition: border-color 120ms, color 120ms, background 120ms;
-  }
-  .info-sponsor svg {
-    width: 13px;
-    height: 13px;
-    color: #c44d4d;
-  }
-  .info-sponsor:hover {
-    border-color: var(--accent);
-    color: var(--accent-strong);
-    background: rgba(72, 89, 65, 0.05);
-  }
-  .info-sponsor:hover svg {
-    color: #b03939;
-  }
-  @keyframes lc-fade-in {
-    from { opacity: 0; }
-    to   { opacity: 1; }
-  }
-  @keyframes lc-pop-in {
-    from { opacity: 0; transform: translateY(6px) scale(0.985); }
-    to   { opacity: 1; transform: translateY(0) scale(1); }
-  }
+  /* Info sheet styles + its lc-info-fade-in/lc-info-pop-in keyframes live
+     in components/InfoSheet.svelte. */
 </style>

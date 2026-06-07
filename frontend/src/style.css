@@ -52,3 +52,143 @@ body {
 #app {
   min-height: 100vh;
 }
+
+/* ─── Modal primitives — shared shell used by every modal component ──── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 30, 25, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  backdrop-filter: blur(2px);
+}
+.modal {
+  background: var(--bg, #fff);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: 0 20px 50px rgba(20, 30, 25, 0.2);
+  width: min(880px, 92vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.modal-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.modal-close {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 4px;
+  cursor: pointer;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal-close:hover {
+  color: var(--text);
+  background: rgba(72, 89, 65, 0.08);
+}
+.modal-body {
+  padding: 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+}
+
+/* ─── Button primitives — same intent: shared, used by any component ── */
+.btn {
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 140ms;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+.btn:hover:not(:disabled) {
+  background: rgba(72, 89, 65, 0.08);
+  border-color: rgba(72, 89, 65, 0.30);
+}
+.btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.btn-ghost {
+  padding: 0 12px;
+  font-size: 12px;
+  background: #fff;
+}
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+  font-weight: 600;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+.btn-spin {
+  display: inline-flex;
+  animation: lc-spin 0.9s linear infinite;
+}
+@keyframes lc-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ─── Method badges — shared visual token used by builder, sidebar,
+   compose modal, results header, etc. Lifted here so every component
+   gets the same chip without duplication. Context-specific overrides
+   (e.g. `.run-header .method`) stay where they're used. */
+.method {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 3px 7px;
+  border-radius: 3px;
+  font-family: "Lexend", ui-monospace, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  min-width: 46px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.m-get     { background: rgba(159, 184, 173, 0.30); color: #2d4538; }
+.m-post    { background: rgba(72, 89, 65, 0.88);    color: #ffffff; }
+.m-put     { background: rgba(138, 114, 54, 0.22);  color: #5a4a26; }
+.m-patch   { background: rgba(138, 114, 54, 0.22);  color: #5a4a26; }
+.m-delete  { background: rgba(120, 50, 50, 0.18);   color: #4a2020; }
+.m-head    { background: rgba(72, 89, 65, 0.10);    color: var(--muted); }
+.m-options { background: rgba(72, 89, 65, 0.10);    color: var(--muted); }
+.m-deleted { background: rgba(120, 50, 50, 0.10);   color: #783232; }
