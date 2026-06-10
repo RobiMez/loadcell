@@ -185,3 +185,6 @@ helps fund more Claude tokens & food (in that order):
 
 [![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-on%20GitHub-c44d4d?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/RobiMez)
 
+---
+<img width="1284" height="1171" alt="image" src="https://github.com/user-attachments/assets/2bdf98ba-ff78-4aed-a7f3-708b1f172639" />
+
